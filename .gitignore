@@ -8,7 +8,7 @@ CLAUDE.md
 
 .md
 !docs/*.md
-README.md
+!README.md
 
 # local-only tooling
 .pre-commit-config.yaml
