@@ -4,7 +4,29 @@ CLAUDE.md
 
 .env
 .env.*
+!.env.example
 
 .md
 !docs/*.md
 README.md
+
+# local-only tooling
+.pre-commit-config.yaml
+
+__pycache__
+*.py[cod]
+*.egg-info/
+.venv/
+
+# tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# local runtime data
+data/
+*.spill.jsonl

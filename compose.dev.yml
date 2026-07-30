@@ -1,0 +1,57 @@
+# Local development dependencies.
+#
+# Always drive this with the `podman-compose` binary (see `just up`).
+# Bare `podman compose` on WSL2 delegates to Docker Desktop's docker-compose.exe
+# across the Windows boundary. See ai-kb/DECISIONS.md AD-015.
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: kb-postgres
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb_local_dev
+      POSTGRES_DB: kb
+    ports:
+      - "5433:5432"
+    volumes:
+      - kb-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  chroma:
+    image: docker.io/chromadb/chroma:latest
+    container_name: kb-chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - kb-chroma-data:/data
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    # The chroma image ships no curl, wget, or python on PATH — only bash.
+    # /dev/tcp is the one HTTP client available.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/localhost/8000 && printf "GET /api/v2/heartbeat HTTP/1.0\r\n\r\n" >&3 && grep -q heartbeat <&3'
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+volumes:
+  kb-postgres-data:
+  kb-chroma-data:

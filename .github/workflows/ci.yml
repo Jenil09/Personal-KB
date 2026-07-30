@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  quality:
+    name: lint / types / unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Lockfile is current
+        run: uv lock --check
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy apps libs
+
+      - name: Unit tests
+        run: uv run pytest -m "not integration" --cov --cov-report=term-missing
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kb
+          POSTGRES_PASSWORD: kb_local_dev
+          POSTGRES_DB: kb
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kb -d kb"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      chroma:
+        image: chromadb/chroma:latest
+        ports: ["8001:8000"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Integration tests
+        env:
+          KB_API__POSTGRES__DSN: postgresql+asyncpg://kb:kb_local_dev@localhost:5433/kb
+          KB_API__CHROMA__HOST: localhost
+          KB_API__CHROMA__PORT: "8001"
+        run: uv run pytest -m integration

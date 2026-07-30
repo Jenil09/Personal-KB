@@ -1,0 +1,81 @@
+[project]
+name = "redshift7-workspace"
+version = "0.0.0"
+description = "Redshift7 personal services monorepo"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["apps/*", "libs/*", "tools/*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.0",
+    "mypy>=1.18.0",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "testcontainers>=4.13.0",
+]
+
+# ---------------------------------------------------------------------------
+# Shared tool configuration. Workspace members inherit this; they should not
+# redefine it unless a member genuinely needs to differ.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["apps", "libs", "tools"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # naive datetimes
+    "T20",       # print statements
+    "SIM",       # simplify
+    "PTH",       # pathlib over os.path
+    "RUF",
+]
+ignore = [
+    "E501",      # line length is enforced by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kb_api", "platform_core", "platform_fastapi", "platform_db", "ai_embeddings"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+warn_return_any = true
+disallow_untyped_defs = true
+no_implicit_reexport = true
+pretty = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "*.tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["apps", "libs", "tools"]
+python_files = ["test_*.py"]
+addopts = "--strict-markers --strict-config"
+markers = [
+    "integration: requires containerised Postgres and Chroma (deselect with -m 'not integration')",
+]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

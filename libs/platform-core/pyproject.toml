@@ -1,0 +1,18 @@
+[project]
+name = "platform-core"
+version = "0.1.0"
+description = "Shared settings, logging, and error primitives for Redshift7 services"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
+    "structlog>=25.4.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "platform_core"
+module-root = "src"
