@@ -1,0 +1,10 @@
+ai-kb/
+CLAUDE.md
+.claude/
+
+.env
+.env.*
+
+.md
+!docs/*.md
+README.md
