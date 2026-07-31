@@ -10,13 +10,20 @@ members = ["apps/*", "libs/*", "tools/*"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.0",
     "ruff>=0.14.0",
     "mypy>=1.18.0",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "testcontainers>=4.13.0",
+    # Both provider extras, so the contract suite can run against both drivers.
+    # Extras on a workspace member are not installed by `uv sync` otherwise.
+    "ai-embeddings[gemini,openai]",
 ]
+
+[tool.uv.sources]
+ai-embeddings = { workspace = true }
 
 # ---------------------------------------------------------------------------
 # Shared tool configuration. Workspace members inherit this; they should not
@@ -56,6 +63,9 @@ known-first-party = ["kb_api", "platform_core", "platform_fastapi", "platform_db
 
 [tool.mypy]
 python_version = "3.13"
+# Without the plugin, `dataclass_transform` makes mypy demand every settings
+# field as a constructor argument, even though the environment supplies them.
+plugins = ["pydantic.mypy"]
 strict = true
 warn_unreachable = true
 warn_return_any = true
@@ -64,15 +74,19 @@ no_implicit_reexport = true
 pretty = true
 show_error_codes = true
 
-[[tool.mypy.overrides]]
-module = ["tests.*", "*.tests.*"]
-disallow_untyped_defs = false
+# Test suites are checked with `no-untyped-def` off — see the justfile. A
+# per-module override cannot express it: `tests/` deliberately has no
+# `__init__.py`, so mypy sees bare module names like `test_health`, and its
+# override patterns only wildcard whole components.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["apps", "libs", "tools"]
 python_files = ["test_*.py"]
-addopts = "--strict-markers --strict-config"
+# importlib import mode: every member has its own `tests/` directory, so test
+# modules collide on basename (two `test_settings.py`) under the default
+# prepend mode. This also keeps `tests/` off sys.path.
+addopts = "--strict-markers --strict-config --import-mode=importlib"
 markers = [
     "integration: requires containerised Postgres and Chroma (deselect with -m 'not integration')",
 ]

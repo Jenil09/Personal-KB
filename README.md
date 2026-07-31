@@ -6,8 +6,12 @@ The first service is **`kb-api`**: a FastAPI + ChromaDB personal knowledge base 
 semantic search over personal technical documentation, consumed by n8n workflows and a local
 CLI. PostgreSQL is the system of record and holds a guaranteed audit trail.
 
-> **Status:** Early development. The workspace, tooling, and CI are in place; `kb-api` and
-> `platform-core` are skeletons with no logic yet.
+> **Status:** Early development. The workspace, tooling, and CI are in place. All four shared
+> libraries are built and tested — `platform-core` (settings, logging, error taxonomy,
+> correlation IDs), `platform-fastapi` (app factory, bearer auth, problem+json errors,
+> health), `platform-db` (async engine, Alembic scaffolding, two-tier audit trail), and
+> `ai-embeddings` (provider port, OpenAI and Gemini drivers, token accounting). `kb-api` is
+> still a skeleton.
 
 ## Prerequisites
 
@@ -39,7 +43,8 @@ just check                 # lockfile, lint, format, types, unit tests
 | `just lint` / `just fmt` | ruff check / ruff format |
 | `just typecheck` | mypy (strict) |
 | `just test` | Unit tests |
-| `just test-int` | Integration tests — needs `just up` |
+| `just test-int` | Integration tests — start their own containers via testcontainers |
+| `just cov [package] [floor]` | Branch coverage for one package, floor enforced |
 | `just up` / `just down` | Local Postgres + Chroma |
 | `just nuke` | Tear down **and destroy data volumes** |
 | `just logs [service]` | Follow container logs |

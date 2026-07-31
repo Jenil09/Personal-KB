@@ -1,0 +1,29 @@
+[project]
+name = "ai-embeddings"
+version = "0.1.0"
+description = "EmbeddingProvider port with OpenAI and Gemini adapters and token accounting"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "platform-core",
+    "httpx>=0.28.0",
+    "tiktoken>=0.13.0",
+]
+
+# One port, two drivers, per AD-010: a service installs only the SDK it uses.
+[project.optional-dependencies]
+openai = ["openai>=2.0.0"]
+gemini = ["google-genai>=1.45.0"]
+# `ai_embeddings.testing` carries the shared contract suite, so any consumer
+# adding a driver can run it.
+testing = ["pytest>=8.4.0"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "ai_embeddings"
+module-root = "src"
+
+[tool.uv.sources]
+platform-core = { workspace = true }

@@ -30,9 +30,23 @@ fmt:
 fmt-check:
     uv run ruff format --check .
 
-# `tools` is omitted until it holds Python; mypy errors on empty directories
+# `tools` is omitted until it holds Python; mypy errors on empty directories.
+#
+# Sources go in one pass. Each member's tests need their own, because mypy maps
+# `libs/*/tests/test_settings.py` to the module `test_settings` whichever member
+# it belongs to, and two members having one is normal. `no-untyped-def` is off
+# there so pytest fixture parameters can stay unannotated; the rest is strict.
+#
+# Do not "fix" the duplicate-module error by adding `tests/__init__.py`: pytest
+# then resolves both files to `tests.test_settings`, silently runs one twice and
+# the other never.
 typecheck:
-    uv run mypy apps libs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run mypy apps libs --exclude '/tests/'
+    for suite in $(find apps libs -type d -name tests | sort); do
+        uv run mypy "$suite" --disable-error-code=no-untyped-def
+    done
 
 # Everything CI runs, in CI's order
 check: lock-check lint fmt-check typecheck test
@@ -48,6 +62,10 @@ test-int:
 
 test-all:
     uv run pytest
+
+# Branch coverage for one package, with the floor its phase committed to
+cov package="platform_core" floor="100":
+    uv run pytest -m "not integration" --cov={{package}} --cov-branch --cov-report=term-missing --cov-fail-under={{floor}}
 
 # --- local dependencies ---------------------------------------------------
 
