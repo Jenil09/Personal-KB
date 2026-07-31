@@ -8,25 +8,26 @@ everywhere and live here.
 A service's `env.py` in full:
 
 ```python
-from alembic import context
-
-from kb_api.adapters.postgres.models import kb_metadata
-from kb_api.config import settings
-from platform_db import audit_metadata, run_migrations
+from kb_api.adapters.postgres import KB_SCHEMA, kb_metadata, telemetry_metadata
+from kb_api.config import get_database_config
+from platform_db import AUDIT_SCHEMA, audit_metadata, run_migrations
 
 run_migrations(
-    target_metadata=[kb_metadata, audit_metadata],
-    dsn=settings.database.dsn.get_secret_value(),
-    schemas=("kb", "kb_audit"),
+    target_metadata=[kb_metadata, audit_metadata, telemetry_metadata],
+    dsn=get_database_config().postgres.dsn.get_secret_value(),
+    schemas=(KB_SCHEMA, AUDIT_SCHEMA),
 )
 ```
 
-Two things this gets right that hand-rolled `env.py` files usually do not.
+Four things this gets right that hand-rolled `env.py` files usually do not.
 `include_schemas=True` without an `include_object` filter makes autogenerate
 propose dropping every table in the database it was not told about, which on a
-shared instance means someone else's. And Alembic will not create the schema its
-own version table lives in, so the first `upgrade head` fails on a clean database
-unless the schemas are created first.
+shared instance means someone else's. Alembic will not create the schema its own
+version table lives in, so the first `upgrade head` fails on a clean database
+unless the schemas are created first. The connection pins `search_path`, so
+which schema counts as "default" does not depend on the database user's name.
+And the empty-revision filter is scoped to `revision --autogenerate`, so
+`alembic check` still has a directive to read on the no-drift path.
 """
 
 import asyncio
@@ -40,6 +41,7 @@ from alembic.runtime.environment import (
     NameFilterParentNames,
     NameFilterType,
 )
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Connection, MetaData, schema
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
@@ -96,10 +98,20 @@ async def _run_online(
 ) -> None:
     # NullPool: migrations are a one-shot process. Pooling would only leave
     # connections open past the last statement.
+    #
+    # `search_path` is pinned so the *default* schema cannot depend on the
+    # database user's name. Postgres defaults it to `"$user", public`, so
+    # connecting as `kb` to a database that has a schema called `kb` makes
+    # `current_schema()` return `kb` — and autogenerate reports the default
+    # schema as `None`, so an owned schema stops being reflected and every
+    # table in it is proposed for creation on a database that already has them.
+    # It depends on a coincidence between the role name and a schema name,
+    # which means it reproduces on the dev box and not under testcontainers.
     engine = async_engine_from_config(
         {"sqlalchemy.url": dsn},
         prefix="sqlalchemy.",
         poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": "public"}},
     )
     try:
         async with engine.connect() as connection:
@@ -192,11 +204,20 @@ def _only_owned_names(owned: tuple[str, ...]) -> IncludeNameFn:
 
 
 def _skip_empty_revisions(
-    migration_context: object,
+    migration_context: MigrationContext,
     revision: object,
     directives: list[MigrationScript],
 ) -> None:
-    """Drop a no-op autogenerate rather than committing an empty revision file."""
+    """Drop a no-op autogenerate rather than committing an empty revision file.
+
+    Guarded to `revision --autogenerate`. `alembic check` — the drift check CI
+    runs — installs the same hook and then reads `generated_revisions[-1]`, so
+    emptying the list turns "no drift", the passing case, into an `IndexError`
+    that looks like a broken migration setup rather than a clean one.
+    """
+    cmd_opts = getattr(migration_context.config, "cmd_opts", None)
+    if not getattr(cmd_opts, "autogenerate", False):
+        return
     if (
         directives
         and directives[0].upgrade_ops is not None

@@ -91,6 +91,14 @@ logs service="":
 migrate:
     cd apps/kb-api && uv run alembic upgrade head
 
+# Fails if the models have drifted from the migrations
+migrate-check:
+    cd apps/kb-api && uv run alembic check
+
+# Roll back one revision
+migrate-down revision="-1":
+    cd apps/kb-api && uv run alembic downgrade {{revision}}
+
 run:
     uv run uvicorn kb_api.main:app --reload --port 8000
 

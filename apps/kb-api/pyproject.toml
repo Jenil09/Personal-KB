@@ -5,6 +5,7 @@ description = "Personal Knowledge Base API"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "platform-core",
+    "platform-db",
     "fastapi>=0.121.0",
     "uvicorn[standard]>=0.38.0",
 ]
@@ -19,3 +20,4 @@ module-root = "src"
 
 [tool.uv.sources]
 platform-core = { workspace = true }
+platform-db = { workspace = true }

@@ -462,6 +462,7 @@ source = { editable = "apps/kb-api" }
 dependencies = [
     { name = "fastapi" },
     { name = "platform-core" },
+    { name = "platform-db" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -469,6 +470,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.121.0" },
     { name = "platform-core", editable = "libs/platform-core" },
+    { name = "platform-db", editable = "libs/platform-db" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
 ]
 
