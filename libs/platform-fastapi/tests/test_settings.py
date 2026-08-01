@@ -85,3 +85,39 @@ def test_defaults_carry_through_from_the_core_base() -> None:
     settings = ExampleSettings(api_keys={"n8n": SecretStr("secret")})
     assert (settings.env, settings.log_level, settings.log_json) == ("local", "INFO", True)
     assert settings.health_timeout_seconds == 2.0
+
+
+# --- scopes (AD-024) ------------------------------------------------------
+
+
+def test_scopes_parse_from_a_comma_separated_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:one,cli:two")
+    monkeypatch.setenv("EXAMPLE__API_KEY_SCOPES", "n8n:search, cli:search|write")
+    settings = ExampleSettings()
+
+    assert settings.api_key_scopes == {
+        "n8n": frozenset({"search"}),
+        "cli": frozenset({"search", "write"}),
+    }
+
+
+def test_scopes_default_to_empty_meaning_unrestricted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:one")
+    assert ExampleSettings().api_key_scopes == {}
+
+
+def test_a_secret_containing_a_colon_survives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Why scopes are their own setting rather than a third field on `api_keys`:
+    the key parser splits once, so a colon in the secret is not ambiguous — but
+    it would be if scopes came after it."""
+    monkeypatch.setenv("EXAMPLE__API_KEYS", "cli:aa:bb:cc")
+    assert ExampleSettings().api_keys["cli"].get_secret_value() == "aa:bb:cc"
+
+
+@pytest.mark.parametrize("value", ["n8n", "n8n:", ":search"])
+def test_malformed_scopes_are_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:one")
+    monkeypatch.setenv("EXAMPLE__API_KEY_SCOPES", value)
+
+    with pytest.raises(ConfigurationError):
+        ExampleSettings()

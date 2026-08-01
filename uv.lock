@@ -882,12 +882,14 @@ source = { editable = "libs/platform-fastapi" }
 dependencies = [
     { name = "fastapi" },
     { name = "platform-core" },
+    { name = "platform-db" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.121.0" },
     { name = "platform-core", editable = "libs/platform-core" },
+    { name = "platform-db", editable = "libs/platform-db" },
 ]
 
 [[package]]

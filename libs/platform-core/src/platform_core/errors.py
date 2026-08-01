@@ -15,11 +15,13 @@ from typing import Any, ClassVar
 
 __all__ = [
     "AuthenticationError",
+    "AuthorizationError",
     "ConfigurationError",
     "ConflictError",
     "NotFoundError",
     "PayloadTooLargeError",
     "PlatformError",
+    "RateLimitedError",
     "UpstreamError",
     "ValidationError",
 ]
@@ -32,12 +34,22 @@ class PlatformError(Exception):
     code: ClassVar[str] = "internal_error"
     title: ClassVar[str] = "Internal Server Error"
 
-    def __init__(self, detail: str, *, context: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         # `Any` because context holds arbitrary JSON-serialisable extension
         # members destined for the problem+json body and the audit row.
         super().__init__(detail)
         self.detail = detail
         self.context: dict[str, Any] = dict(context) if context else {}
+        # `Retry-After` on a 429 is the case this exists for: it is part of the
+        # answer rather than decoration, and a client that has to parse the body
+        # to find it will not.
+        self.headers: dict[str, str] = dict(headers) if headers else {}
 
     def __repr__(self) -> str:
         return (
@@ -64,6 +76,35 @@ class AuthenticationError(PlatformError):
     status_code: ClassVar[int] = 401
     code: ClassVar[str] = "unauthenticated"
     title: ClassVar[str] = "Unauthorized"
+
+
+class AuthorizationError(PlatformError):
+    """A recognised key that lacks the scope the operation needs (AD-024).
+
+    Differentiated where `AuthenticationError` deliberately is not, and the
+    asymmetry is the point. A `401` must not reveal whether a key exists, so it
+    says nothing. A caller reaching here already holds a valid key and already
+    knows it exists — telling it which scope it is missing is diagnosable rather
+    than leaky, so `context` carries the required scope.
+    """
+
+    status_code: ClassVar[int] = 403
+    code: ClassVar[str] = "insufficient_scope"
+    title: ClassVar[str] = "Forbidden"
+
+
+class RateLimitedError(PlatformError):
+    """Too many requests from one key (AD-014).
+
+    Raised by the two limits that reject — the per-minute burst ceiling and the
+    daily hard ceiling. The middle threshold flags the audit row and does not
+    raise, because a limit that blocks legitimate traffic on a productive day is
+    worse than one that only tells you the day was unusual.
+    """
+
+    status_code: ClassVar[int] = 429
+    code: ClassVar[str] = "rate_limited"
+    title: ClassVar[str] = "Too Many Requests"
 
 
 class ValidationError(PlatformError):

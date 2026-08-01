@@ -11,9 +11,35 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from pydantic_settings import SettingsConfigDict
 
+from platform_db import AuditRecord, AuditTrail
 from platform_fastapi import HealthCheck, HttpServiceSettings, create_app
 
 _KEYS = {"n8n": "n8n-secret-value", "cli": "cli-secret-value"}
+
+
+class RecordingTrail(AuditTrail):
+    """An `AuditTrail` whose terminal write lands in a list instead of Postgres.
+
+    A subclass rather than a mock: the record under assertion is then the one the
+    middleware actually constructed and handed over, so a change that builds the
+    wrong record cannot pass merely by calling the method.
+    """
+
+    def __init__(self) -> None:
+        self.records: list[AuditRecord] = []
+
+    async def record(self, record: AuditRecord) -> None:
+        self.records.append(record)
+
+    @property
+    def only(self) -> AuditRecord:
+        assert len(self.records) == 1, f"expected exactly one record, got {len(self.records)}"
+        return self.records[0]
+
+
+@pytest.fixture
+def trail() -> RecordingTrail:
+    return RecordingTrail()
 
 
 class ExampleSettings(HttpServiceSettings):
@@ -42,15 +68,24 @@ def settings() -> ExampleSettings:
 
 @pytest.fixture
 def make_app(settings: ExampleSettings):
+    """Build an app. Keyword arguments `create_app` accepts are forwarded to it;
+    everything else is treated as a settings override."""
+
     def factory(
         routers: Sequence[APIRouter] = (),
         health_checks: Sequence[HealthCheck] = (),
         **overrides: object,
     ) -> FastAPI:
+        passthrough = {
+            name: overrides.pop(name)
+            for name in ("audit_trail", "rate_limits", "lifespan")
+            if name in overrides
+        }
         return create_app(
             settings.model_copy(update=overrides) if overrides else settings,
             routers=routers,
             health_checks=health_checks,
+            **passthrough,  # type: ignore[arg-type]
         )
 
     return factory
