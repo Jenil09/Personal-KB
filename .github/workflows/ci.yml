@@ -34,6 +34,12 @@ jobs:
       - name: Types
         run: uv run mypy apps libs
 
+      # AD-016: the committed schema is the contract. A route change that was
+      # never exported fails here rather than breaking an n8n workflow on the
+      # next deploy.
+      - name: OpenAPI schema is current
+        run: uv run python -m kb_api.scripts.export_openapi --check
+
       - name: Unit tests
         run: uv run pytest -m "not integration" --cov --cov-report=term-missing
 

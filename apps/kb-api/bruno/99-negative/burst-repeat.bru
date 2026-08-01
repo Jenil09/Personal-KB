@@ -1,0 +1,54 @@
+meta {
+  name: burst repeat
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "query": "the identical query, sent over and over",
+    "top_k": 1
+  }
+}
+
+script:pre-request {
+  // Five identical requests inside the window is the AD-014 default. This one
+  // is the sixth, so the flag is already up by the time it is asserted on.
+  const url = bru.getEnvVar("base_url") + "/v1/search";
+  const body = JSON.stringify({ query: "the identical query, sent over and over", top_k: 1 });
+  for (let i = 0; i < 5; i++) {
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + bru.getEnvVar("api_key"),
+      },
+      body,
+    });
+  }
+}
+
+docs {
+  AD-014's sharpest signal. A rate limit says traffic was heavy; `repeat_burst`
+  says it was *the same request over and over*, which is broken automation
+  rather than load.
+
+  **This request succeeds.** The burst flag does not reject — it lands on the
+  tier-1 audit row and surfaces on `03-admin/stats` as `recent_bursts`. The
+  reason it flags rather than blocks is that the fingerprint includes the
+  payload: n8n legitimately sends ten to fifteen searches on this one path per
+  run, and a path-only rule would call that a loop within a minute.
+
+  Verify the effect on `03-admin/stats`, where `recent_bursts` should now be
+  non-zero, or in `kb_audit.request_logs` where `repeat_burst` is `true`.
+}
+
+assert {
+  res.status: eq 200
+}

@@ -49,7 +49,7 @@ typecheck:
     done
 
 # Everything CI runs, in CI's order
-check: lock-check lint fmt-check typecheck test
+check: lock-check lint fmt-check typecheck schema-check test
 
 # --- tests ----------------------------------------------------------------
 
@@ -105,6 +105,10 @@ run:
 # Export the OpenAPI schema; CI fails if this produces a diff
 schema:
     uv run python -m kb_api.scripts.export_openapi
+
+# Fails if the committed schema no longer matches the routes (AD-016)
+schema-check:
+    uv run python -m kb_api.scripts.export_openapi --check
 
 # Run the Bruno collection against a live instance
 bru env="local":

@@ -57,6 +57,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101"]
+# Operator entry points, run from `just` and from CI. Their output goes to a
+# terminal, so `print` is the interface rather than a stray debug statement.
+"**/scripts/**" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kb_api", "platform_core", "platform_fastapi", "platform_db", "ai_embeddings"]
