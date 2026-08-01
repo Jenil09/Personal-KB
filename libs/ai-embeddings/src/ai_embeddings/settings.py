@@ -20,9 +20,12 @@ class EmbeddingProviderSettings(BaseModel):
 
     model_config = {"frozen": True}
 
-    # No default. A missing key fails at startup rather than on the first
-    # search, which is the whole point of loading settings eagerly.
-    api_key: SecretStr
+    # No default, and no empty string either. A blank `KB_API__OPENAI__API_KEY=`
+    # in a `.env` file is the common way a provider ends up half-configured: the
+    # settings load, the registry offers the provider, and the first embedding
+    # call comes back 401. Failing at startup is the whole point of loading
+    # secrets eagerly.
+    api_key: SecretStr = Field(min_length=1)
 
     connect_timeout_seconds: float = Field(default=5.0, gt=0)
     read_timeout_seconds: float = Field(default=30.0, gt=0)

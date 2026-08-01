@@ -18,6 +18,7 @@ __all__ = [
     "ConfigurationError",
     "ConflictError",
     "NotFoundError",
+    "PayloadTooLargeError",
     "PlatformError",
     "UpstreamError",
     "ValidationError",
@@ -71,6 +72,18 @@ class ValidationError(PlatformError):
     status_code: ClassVar[int] = 422
     code: ClassVar[str] = "validation_error"
     title: ClassVar[str] = "Unprocessable Entity"
+
+
+class PayloadTooLargeError(PlatformError):
+    """The request body is over the configured ceiling (Design §8).
+
+    Raised by the body-cap middleware before the body is buffered, so an
+    oversized request costs the bytes already on the wire and nothing else.
+    """
+
+    status_code: ClassVar[int] = 413
+    code: ClassVar[str] = "payload_too_large"
+    title: ClassVar[str] = "Content Too Large"
 
 
 class ConflictError(PlatformError):

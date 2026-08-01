@@ -1,0 +1,35 @@
+meta {
+  name: ingest document
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/v1/documents
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "title": "Redshift Architecture",
+    "content": "# Redshift Architecture\n\n## Networking\n\nBare metal Kubernetes with Cilium in kube-proxy replacement mode. BGP peering to the top-of-rack switch advertises LoadBalancer addresses.\n\n## Storage\n\nLonghorn with three replicas per volume, backed by NVMe. Snapshots ship nightly to object storage.\n",
+    "source": "redshift_architecture.md",
+    "type": "architecture",
+    "tags": ["ansible", "hardening"],
+    "provider": "openai"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq success
+}
+
+script:post-response {
+  // Re-running this request is the AD-008 short-circuit, not an error: the
+  // content hash matches, so the second call embeds nothing and answers
+  // "unchanged" with the same document_id.
+  bru.setVar("document_id", res.body.document_id);
+  bru.setVar("collection", res.body.collection);
+}

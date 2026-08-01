@@ -7,8 +7,13 @@ dependencies = [
     "ai-embeddings",
     "platform-core",
     "platform-db",
+    "platform-fastapi",
     "fastapi>=0.121.0",
     "uvicorn[standard]>=0.38.0",
+    # The thin HTTP client, not the `chromadb` server distribution: this service
+    # talks to a Chroma container over the network and has no use for onnxruntime,
+    # tokenizers, or the embedded server the full package drags in (AD-010).
+    "chromadb-client>=1.5.0",
 ]
 
 [build-system]
@@ -23,3 +28,4 @@ module-root = "src"
 ai-embeddings = { workspace = true }
 platform-core = { workspace = true }
 platform-db = { workspace = true }
+platform-fastapi = { workspace = true }
