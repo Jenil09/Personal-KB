@@ -26,12 +26,14 @@ from uuid import UUID, uuid5
 
 import pytest
 from sqlalchemy import text
+from testcontainers.community.chroma import ChromaContainer
 from testcontainers.community.postgres import PostgresContainer
 
 from kb_api.domain import NewChunk, NewDocument
 from platform_db import Database, DatabaseSettings
 
 IMAGE = "docker.io/library/postgres:16-alpine"
+CHROMA_IMAGE = "docker.io/chromadb/chroma:latest"
 
 KB_API_ROOT = Path(__file__).resolve().parents[1]
 
@@ -71,6 +73,33 @@ def dsn(postgres_port: int) -> str:
 @pytest.fixture(scope="module")
 def postgres(postgres_port: int) -> Iterator[PostgresContainer]:
     container = PostgresContainer(IMAGE).with_bind_ports(5432, postgres_port)
+    container.start()
+    try:
+        yield container
+    finally:
+        # Fixtures own teardown: Ryuk is disabled under rootless Podman (AD-015).
+        with suppress(Exception):
+            container.stop()
+
+
+@pytest.fixture(scope="module")
+def chroma_port() -> int:
+    return _free_port()
+
+
+@pytest.fixture(scope="module")
+def chroma(chroma_port: int) -> Iterator[ChromaContainer]:
+    """A real Chroma, on a bound port.
+
+    Bound rather than mapped for the same reason as Postgres: the tests that
+    matter here restart a container and expect the client to reconnect to the
+    same address, which a randomly mapped port makes impossible.
+
+    The tag matches `compose.dev.yml`. A test suite on a different Chroma
+    version from the one development runs against would find its bugs a release
+    late.
+    """
+    container = ChromaContainer(CHROMA_IMAGE).with_bind_ports(8000, chroma_port)
     container.start()
     try:
         yield container

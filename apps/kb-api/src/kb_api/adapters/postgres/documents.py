@@ -21,6 +21,7 @@ from sqlalchemy import (
     Row,
     and_,
     delete,
+    exists,
     func,
     or_,
     select,
@@ -28,7 +29,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kb_api.adapters.postgres.tables import documents
+from kb_api.adapters.postgres.tables import chunks, documents
 from kb_api.domain import (
     Document,
     DocumentFilter,
@@ -175,6 +176,37 @@ class DocumentRepository:
         if collection is not None:
             statement = statement.where(documents.c.collection == collection)
         result = await session.execute(statement.order_by(documents.c.created_at).limit(limit))
+        return tuple(_to_document(row) for row in result.all())
+
+    async def find_purgeable(
+        self, session: AsyncSession, *, collection: str | None = None, limit: int = 100
+    ) -> tuple[Document, ...]:
+        """Soft-deleted documents whose chunk rows are still here.
+
+        The other half of the reconciliation input. Design §3.3 makes the
+        soft-delete flag the crash marker for the delete path, and a supersede is
+        a delete with an insert in front of it — so a crash between the flag and
+        the Chroma purge leaves a document Postgres considers gone whose vectors
+        search still answers with. Surviving chunk rows are what says the purge
+        never ran: the hard delete is the last step, so their absence means it
+        completed.
+
+        No index backs this and none should. It runs at startup over a table
+        whose ceiling is ~100 documents, and an index on `deleted_at` would be
+        maintained on every write to serve a query that runs once a deploy.
+        """
+        statement = (
+            select(documents)
+            .where(
+                documents.c.deleted_at.is_not(None),
+                exists().where(chunks.c.document_id == documents.c.id),
+            )
+            .order_by(documents.c.deleted_at)
+            .limit(limit)
+        )
+        if collection is not None:
+            statement = statement.where(documents.c.collection == collection)
+        result = await session.execute(statement)
         return tuple(_to_document(row) for row in result.all())
 
     async def set_status(

@@ -1,0 +1,31 @@
+meta {
+  name: ingest with an unknown provider
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/documents
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "title": "Wrong provider",
+    "content": "This names a provider the service has no key for.",
+    "type": "architecture",
+    "provider": "cohere"
+  }
+}
+
+docs {
+  A 422, not the 409 search returns for a collection that exists but is empty.
+  An operator whose API key is missing should not see the same answer as an
+  empty corpus.
+}
+
+assert {
+  res.status: eq 422
+  res.body.code: eq validation_error
+}
