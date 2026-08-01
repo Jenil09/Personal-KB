@@ -7,6 +7,7 @@ exists describes a guess rather than a requirement. It gets extracted when the
 ingestion service binds to it.
 """
 
+from kb_api.domain.collections import collection_name, model_slug
 from kb_api.domain.documents import (
     Chunk,
     Document,
@@ -27,4 +28,6 @@ __all__ = [
     "IpAddress",
     "NewChunk",
     "NewDocument",
+    "collection_name",
+    "model_slug",
 ]
