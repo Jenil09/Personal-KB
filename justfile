@@ -100,7 +100,7 @@ migrate-down revision="-1":
     cd apps/kb-api && uv run alembic downgrade {{revision}}
 
 run:
-    uv run uvicorn kb_api.main:app --reload --port 8000
+    uv run uvicorn kb_api.main:build_app --factory --reload --port 8000
 
 # Export the OpenAPI schema; CI fails if this produces a diff
 schema:
