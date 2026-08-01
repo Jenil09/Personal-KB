@@ -10,6 +10,7 @@ Middleware order matters and is fixed here (outermost first):
     ServerErrorMiddleware   starlette's, always outermost
     CORSMiddleware          so its headers reach error responses too
     RequestContextMiddleware
+    BodySizeLimitMiddleware inside the context, so its 413 carries the request ID
     ExceptionMiddleware     starlette's, runs the handlers below
     router
 
@@ -25,6 +26,7 @@ from starlette.types import Lifespan
 
 from platform_core import REQUEST_ID_HEADER, configure_logging
 from platform_fastapi.auth import ApiKeyRegistry, require_api_key
+from platform_fastapi.body_limit import BodySizeLimitMiddleware
 from platform_fastapi.health import HealthCheck, create_health_router
 from platform_fastapi.middleware import RequestContextMiddleware
 from platform_fastapi.problem import install_error_handlers
@@ -58,6 +60,7 @@ def create_app(
 
     install_error_handlers(app)
 
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:
         app.add_middleware(

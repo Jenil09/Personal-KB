@@ -34,6 +34,10 @@ class HttpServiceSettings(BaseServiceSettings):
 
     health_timeout_seconds: float = Field(default=2.0, gt=0)
 
+    # Technical Design §8: 10 MB, 20x the largest expected document. Nginx caps
+    # bodies too; this one holds when nothing is in front of the app.
+    max_body_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+
     @field_validator("api_keys", mode="before")
     @classmethod
     def _parse_api_keys(cls, value: Any) -> Any:
