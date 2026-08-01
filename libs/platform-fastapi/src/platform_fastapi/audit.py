@@ -33,7 +33,7 @@ avoid the import would reintroduce exactly the drift AD-018 exists to prevent.
 """
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from ipaddress import ip_address
 from typing import Any
@@ -82,14 +82,28 @@ def record_operation(
 
 
 class AuditMiddleware:
-    """Writes exactly one tier-1 record per HTTP request."""
+    """Writes exactly one tier-1 record per HTTP request.
+
+    `observer` is where tier-2 hangs off tier-1 without duplicating dispatch.
+    The record is already built here and the exception, if there was one, is
+    already in hand — so a service wanting an `error_logs` row per failure needs
+    a callback rather than a second pass over the same information. It is
+    synchronous, and its failures are swallowed for the same reason tier 2 is
+    droppable: it must not be able to affect the response or the tier-1 write.
+    """
 
     def __init__(
-        self, app: ASGIApp, *, trail: AuditTrail, bursts: BurstDetector | None = None
+        self,
+        app: ASGIApp,
+        *,
+        trail: AuditTrail,
+        bursts: BurstDetector | None = None,
+        observer: Callable[[AuditRecord, BaseException | None], None] | None = None,
     ) -> None:
         self.app = app
         self._trail = trail
         self._bursts = bursts
+        self._observer = observer
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -142,24 +156,34 @@ class AuditMiddleware:
         authenticated = principal is not None
         payload = _payload(state, headers, authenticated=authenticated)
 
-        await self._trail.record(
-            AuditRecord(
-                request_id=UUID(request_id),
-                method=scope["method"],
-                path=scope["path"],
-                status_code=status,
-                outcome=_outcome(status, failure),
-                latency_ms=latency_ms,
-                key_id=principal.key_id if principal is not None else None,
-                client_ip=_client_ip(scope),
-                user_agent=headers.get("user-agent"),
-                error_code=_error_code(state, failure),
-                operation=_operation(state, authenticated=authenticated),
-                payload=payload,
-                repeat_burst=self._repeat_burst(scope, principal, payload),
-                anomaly=bool(state.get(ANOMALY_STATE_ATTR, False)),
-            )
+        record = AuditRecord(
+            request_id=UUID(request_id),
+            method=scope["method"],
+            path=scope["path"],
+            status_code=status,
+            outcome=_outcome(status, failure),
+            latency_ms=latency_ms,
+            key_id=principal.key_id if principal is not None else None,
+            client_ip=_client_ip(scope),
+            user_agent=headers.get("user-agent"),
+            error_code=_error_code(state, failure),
+            operation=_operation(state, authenticated=authenticated),
+            payload=payload,
+            repeat_burst=self._repeat_burst(scope, principal, payload),
+            anomaly=bool(state.get(ANOMALY_STATE_ATTR, False)),
         )
+        await self._trail.record(record)
+        self._observe(record, failure)
+
+    def _observe(self, record: AuditRecord, failure: BaseException | None) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer(record, failure)
+        except Exception as exc:
+            # Tier 2 is best-effort by contract. A defect in the observer must
+            # not become a defect in the trail that is guaranteed.
+            _logger.warning("audit_observer_failed", exc_info=exc)
 
     def _repeat_burst(
         self, scope: Scope, principal: Principal | None, payload: Mapping[str, Any] | None

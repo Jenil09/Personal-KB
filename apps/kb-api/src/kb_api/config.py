@@ -27,7 +27,7 @@ from pydantic_settings import SettingsConfigDict
 from ai_embeddings import EmbeddingProviderSettings
 from platform_core import BaseServiceSettings
 from platform_db import AuditSettings, DatabaseSettings
-from platform_fastapi import HttpServiceSettings
+from platform_fastapi import HttpServiceSettings, RateLimitSettings
 
 __all__ = [
     "ChromaSettings",
@@ -71,6 +71,11 @@ class KbApiSettings(HttpServiceSettings):
     postgres: DatabaseSettings
     audit: AuditSettings = AuditSettings()
     chroma: ChromaSettings = ChromaSettings()
+
+    # AD-014's thresholds — `KB_API__RATE_LIMITS__PER_MINUTE`, and so on. The
+    # defaults are the numbers the decision argued for; they are configurable
+    # because they were derived from one deployment's measured traffic.
+    rate_limits: RateLimitSettings = RateLimitSettings()
 
     openai: EmbeddingProviderSettings | None = None
     gemini: EmbeddingProviderSettings | None = None

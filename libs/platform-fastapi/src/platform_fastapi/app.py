@@ -25,7 +25,7 @@ of request, and each class it would lose is one the trail exists for.
 `add_middleware` prepends, so the calls below read in the opposite order.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI
@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import Lifespan
 
 from platform_core import REQUEST_ID_HEADER, configure_logging, get_logger
-from platform_db import AuditTrail
+from platform_db import AuditRecord, AuditTrail
 from platform_fastapi.audit import AuditMiddleware
 from platform_fastapi.auth import ApiKeyRegistry, require_api_key
 from platform_fastapi.body_limit import BodySizeLimitMiddleware
@@ -63,6 +63,7 @@ def create_app(
     lifespan: Lifespan[Any] | None = None,
     health_checks: Sequence[HealthCheck] = (),
     audit_trail: AuditTrail | None = None,
+    audit_observer: Callable[[AuditRecord, BaseException | None], None] | None = None,
     rate_limits: RateLimitSettings | None = None,
 ) -> FastAPI:
     """Assemble a service. `routers` are mounted under `/v1` behind auth.
@@ -111,7 +112,12 @@ def create_app(
     )
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
     if audit_trail is not None:
-        app.add_middleware(AuditMiddleware, trail=audit_trail, bursts=BurstDetector(limits))
+        app.add_middleware(
+            AuditMiddleware,
+            trail=audit_trail,
+            bursts=BurstDetector(limits),
+            observer=audit_observer,
+        )
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:
         app.add_middleware(

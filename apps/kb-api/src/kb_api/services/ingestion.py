@@ -31,6 +31,7 @@ derived from content, so replaying one overwrites rather than duplicates.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from time import perf_counter
 from uuid import UUID, uuid4
 
 from ai_embeddings import EmbeddingVector
@@ -44,13 +45,14 @@ from kb_api.domain import (
     IpAddress,
     NewChunk,
     NewDocument,
+    TelemetryPort,
     VectorRecord,
     VectorStore,
     chunk_metadata,
 )
 from kb_api.services.embedding import embed_in_batches
 from kb_api.services.providers import ProviderRegistry, ResolvedProvider
-from platform_core import ValidationError, get_logger
+from platform_core import ValidationError, get_logger, get_request_id
 from platform_db import SessionSource
 
 __all__ = ["IngestOutcome", "IngestRequest", "IngestResult", "IngestionService"]
@@ -104,14 +106,17 @@ class IngestionService:
         chunks: ChunkStore,
         vectors: VectorStore,
         providers: ProviderRegistry,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self._sessions = sessions
         self._documents = documents
         self._chunks = chunks
         self._vectors = vectors
         self._providers = providers
+        self._telemetry = telemetry
 
     async def ingest(self, request: IngestRequest) -> IngestResult:
+        started = perf_counter()
         target = self._providers.resolve(request.provider)
         content = normalise(request.content)
         if not content.strip():
@@ -126,6 +131,13 @@ class IngestionService:
             # §3.1 step 2. Zero chunks, zero tokens, zero API calls — and no
             # supersede, since the live document already holds this content.
             _logger.info("ingest_unchanged", document_id=str(existing.id))
+            self._emit_ingest(
+                collection=existing.collection,
+                outcome=IngestOutcome.UNCHANGED.value,
+                document_id=existing.id,
+                content_bytes=len(content.encode()),
+                started=started,
+            )
             return IngestResult(
                 document_id=existing.id,
                 collection=existing.collection,
@@ -216,6 +228,15 @@ class IngestionService:
             await self._purge(target.collection, stale)
 
         reused = sum(1 for chunk in new_chunks if chunk.text_hash in carried)
+        self._emit_ingest(
+            collection=target.collection,
+            outcome=IngestOutcome.SUCCESS.value,
+            document_id=document_id,
+            chunks_created=len(new_chunks) - reused,
+            chunks_reused=reused,
+            content_bytes=len(content.encode()),
+            started=started,
+        )
         _logger.info(
             "ingest_complete",
             document_id=str(document_id),
@@ -280,8 +301,49 @@ class IngestionService:
             return {}, 0, 0
 
         result = await embed_in_batches(target.provider, list(pending.values()))
+        if self._telemetry is not None and (request_id := _request_uuid()) is not None:
+            model = target.provider.model
+            self._telemetry.tokens_used(
+                request_id=request_id,
+                provider=target.name,
+                model=model.model_id,
+                operation="ingest",
+                input_tokens=result.tokens,
+                token_source=result.token_source,
+                api_calls=result.calls,
+            )
         embedded = dict(zip(pending, result.vectors, strict=True))
         return embedded, result.tokens, result.calls
+
+    def _emit_ingest(
+        self,
+        *,
+        collection: str,
+        outcome: str,
+        document_id: UUID,
+        started: float,
+        chunks_created: int = 0,
+        chunks_reused: int = 0,
+        content_bytes: int | None = None,
+    ) -> None:
+        """Tier 2, so it never raises and never blocks (AD-013).
+
+        Skipped outside a request — the CLI and the reconciliation pass both
+        call this flow with no correlation id, and a telemetry row that invented
+        one would join to nothing.
+        """
+        if self._telemetry is None or (request_id := _request_uuid()) is None:
+            return
+        self._telemetry.ingest_completed(
+            request_id=request_id,
+            collection=collection,
+            outcome=outcome,
+            document_id=document_id,
+            chunks_created=chunks_created,
+            chunks_reused=chunks_reused,
+            content_bytes=content_bytes,
+            duration_ms=round((perf_counter() - started) * 1000),
+        )
 
     async def _purge(self, collection: str, document_id: UUID) -> None:
         """Vectors out, then rows out. Never the other way round.
@@ -294,3 +356,13 @@ class IngestionService:
         async with self._sessions.session() as session:
             await self._chunks.delete_for_document(session, document_id)
             await self._documents.hard_delete(session, document_id)
+
+
+def _request_uuid() -> UUID | None:
+    """The correlation id, when there is one.
+
+    `RequestContextMiddleware` binds it per request; a CLI or startup caller has
+    none, and the tier-2 tables key on it.
+    """
+    request_id = get_request_id()
+    return UUID(request_id) if request_id else None

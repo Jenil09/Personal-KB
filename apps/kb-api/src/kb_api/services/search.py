@@ -29,19 +29,21 @@ answers with no results and never issues the query.
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
+from uuid import UUID
 
 from kb_api.domain import (
     DOCUMENT_ID_KEY,
     DocumentFilter,
     DocumentStore,
     MatchMetadata,
+    TelemetryPort,
     VectorMatch,
     VectorStore,
     read_metadata,
 )
 from kb_api.services.providers import ProviderRegistry, ResolvedProvider
 from kb_api.services.query_cache import CachedQuery, QueryEmbeddingCache, query_cache_key
-from platform_core import ConflictError, ValidationError, get_logger
+from platform_core import ConflictError, ValidationError, get_logger, get_request_id
 from platform_db import SessionSource
 
 __all__ = [
@@ -155,6 +157,7 @@ class SearchService:
         providers: ProviderRegistry,
         cache: QueryEmbeddingCache,
         tag_filter_limit: int,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self._sessions = sessions
         self._documents = documents
@@ -162,6 +165,7 @@ class SearchService:
         self._providers = providers
         self._cache = cache
         self._tag_filter_limit = tag_filter_limit
+        self._telemetry = telemetry
 
     async def search(self, request: SearchQuery) -> SearchResult:
         started = perf_counter()
@@ -281,7 +285,27 @@ class SearchService:
             token_source=embedding.token_source,
         )
         self._cache.put(key, entry)
+        # Emitted on the miss only. A cache hit costs no API call and no tokens,
+        # so recording one would make the token column bill for work the provider
+        # never did — the `query_tokens` a hit reports is a memory of the first
+        # search, not a charge for this one.
+        self._emit_tokens(target, entry)
         return entry, False
+
+    def _emit_tokens(self, target: ResolvedProvider, entry: CachedQuery) -> None:
+        if self._telemetry is None:
+            return
+        request_id = get_request_id()
+        if not request_id:
+            return
+        self._telemetry.tokens_used(
+            request_id=UUID(request_id),
+            provider=target.name,
+            model=target.provider.model.model_id,
+            operation="search",
+            input_tokens=entry.tokens,
+            token_source=str(entry.token_source),
+        )
 
 
 def _to_hit(match: VectorMatch) -> SearchHit:

@@ -1,5 +1,6 @@
 """Application services. They depend on ports in `domain/`, never on adapters."""
 
+from kb_api.services.documents import DeleteResult, DocumentService
 from kb_api.services.ingestion import (
     IngestionService,
     IngestOutcome,
@@ -16,9 +17,13 @@ from kb_api.services.search import (
     SearchResult,
     SearchService,
 )
+from kb_api.services.stats import CollectionStats, ServiceStats, StatsService
 
 __all__ = [
     "CachedQuery",
+    "CollectionStats",
+    "DeleteResult",
+    "DocumentService",
     "IngestOutcome",
     "IngestRequest",
     "IngestResult",
@@ -33,5 +38,7 @@ __all__ = [
     "SearchQuery",
     "SearchResult",
     "SearchService",
+    "ServiceStats",
+    "StatsService",
     "query_cache_key",
 ]

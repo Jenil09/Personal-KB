@@ -15,10 +15,11 @@ narrower exposure.
 
 from http import HTTPStatus
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
 from kb_api.api.v1.schemas import SearchRequest, SearchResponse
 from kb_api.services.search import SearchFilters, SearchQuery, SearchService
+from platform_fastapi import record_operation, require_scope
 
 __all__ = ["create_search_router"]
 
@@ -31,9 +32,12 @@ def create_search_router(search: SearchService) -> APIRouter:
         status_code=HTTPStatus.OK,
         summary="Semantic search",
         response_model=SearchResponse,
+        dependencies=[Depends(require_scope("search"))],
         responses={
             HTTPStatus.OK: {"description": "Ranked results, nearest first"},
             HTTPStatus.UNAUTHORIZED: {"description": "Missing or unrecognised API key"},
+            HTTPStatus.FORBIDDEN: {"description": "The key lacks the `search` scope (AD-024)"},
+            HTTPStatus.TOO_MANY_REQUESTS: {"description": "Rate limit exceeded (AD-014)"},
             HTTPStatus.CONFLICT: {
                 "description": "The provider's collection holds no documents (AD-006)"
             },
@@ -43,7 +47,19 @@ def create_search_router(search: SearchService) -> APIRouter:
             HTTPStatus.BAD_GATEWAY: {"description": "The embedding provider or Chroma failed"},
         },
     )
-    async def search_documents(body: SearchRequest) -> SearchResponse:
+    async def search_documents(body: SearchRequest, request: Request) -> SearchResponse:
+        # AD-013 stores full query text: this is the row that lets an injection
+        # payload found later be traced back to the search that surfaced it.
+        record_operation(
+            request,
+            "search",
+            {
+                "query": body.query,
+                "top_k": body.top_k,
+                "provider": body.provider,
+                "filters": body.filters.model_dump(exclude_defaults=True),
+            },
+        )
         result = await search.search(
             SearchQuery(
                 query=body.query,

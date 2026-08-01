@@ -24,7 +24,7 @@ from kb_api.domain.documents import (
     NewChunk,
     NewDocument,
 )
-from kb_api.domain.ports import ChunkStore, DocumentStore, VectorStore
+from kb_api.domain.ports import ChunkStore, DocumentStore, TelemetryPort, VectorStore
 from kb_api.domain.vectors import (
     DOCUMENT_ID_KEY,
     TAG_SEPARATOR,
@@ -53,6 +53,7 @@ __all__ = [
     "MatchMetadata",
     "NewChunk",
     "NewDocument",
+    "TelemetryPort",
     "VectorMatch",
     "VectorRecord",
     "VectorStore",

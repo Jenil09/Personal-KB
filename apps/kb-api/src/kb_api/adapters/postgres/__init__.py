@@ -7,7 +7,9 @@ owns (AD-018).
 
 from kb_api.adapters.postgres.chunks import ChunkRepository
 from kb_api.adapters.postgres.documents import DocumentRepository
+from kb_api.adapters.postgres.stats import CorpusStats, StatsRepository, TokenUsage
 from kb_api.adapters.postgres.tables import KB_SCHEMA, chunks, documents, kb_metadata
+from kb_api.adapters.postgres.telemetry import TelemetryRecorder
 from kb_api.adapters.postgres.telemetry_tables import (
     error_logs,
     ingest_logs,
@@ -18,7 +20,11 @@ from kb_api.adapters.postgres.telemetry_tables import (
 __all__ = [
     "KB_SCHEMA",
     "ChunkRepository",
+    "CorpusStats",
     "DocumentRepository",
+    "StatsRepository",
+    "TelemetryRecorder",
+    "TokenUsage",
     "chunks",
     "documents",
     "error_logs",
