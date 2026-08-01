@@ -18,7 +18,7 @@ from platform_db.audit import (
     request_logs,
     traffic_summary,
 )
-from platform_db.engine import Database
+from platform_db.engine import Database, SessionSource
 from platform_db.migrations import run_migrations
 from platform_db.settings import AuditSettings, DatabaseSettings
 
@@ -30,6 +30,7 @@ __all__ = [
     "Database",
     "DatabaseSettings",
     "Outcome",
+    "SessionSource",
     "SpillFile",
     "TelemetryEvent",
     "TelemetrySink",
