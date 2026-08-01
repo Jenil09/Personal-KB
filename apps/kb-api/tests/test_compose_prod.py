@@ -120,8 +120,7 @@ def test_the_proxy_target_is_unambiguous_on_the_tailnet(compose: dict[str, Any])
     aliases = kb_api["kb-tailnet"]["aliases"]
 
     assert target in aliases, (
-        f"serve.json proxies to {target!r}, which is not an alias of kb-api on "
-        "kb-tailnet"
+        f"serve.json proxies to {target!r}, which is not an alias of kb-api on kb-tailnet"
     )
     tailnet_hostname = compose["services"]["tailscale"]["hostname"]
     assert target not in tailnet_hostname, (
