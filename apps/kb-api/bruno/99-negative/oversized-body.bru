@@ -1,0 +1,38 @@
+meta {
+  name: oversized body
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/v1/documents
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "title": "Oversized",
+    "content": "{{oversized_content}}",
+    "type": "architecture"
+  }
+}
+
+script:pre-request {
+  // Built here rather than committed: an 11 MB .bru file would dominate the
+  // repository to assert one status code. Design §8 caps bodies at 10 MB in
+  // middleware, so this is just over it.
+  bru.setVar("oversized_content", "x".repeat(11 * 1024 * 1024));
+}
+
+docs {
+  The cap is enforced in middleware from `Content-Length`, before the body is
+  buffered — so an oversized request costs the bytes already on the wire and
+  nothing else. It is still a recorded request: the `413` produces a tier-1
+  audit row like everything else (AD-013).
+}
+
+assert {
+  res.status: eq 413
+  res.body.code: eq payload_too_large
+}

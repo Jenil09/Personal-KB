@@ -55,6 +55,9 @@ class AuditRecord(BaseModel):
     # lands in a JSONB column unmodified.
     payload: dict[str, Any] | None = None
     repeat_burst: bool = False
+    anomaly: bool = False
+    # AD-023: the tailnet identity behind the proxy hop, when there is one.
+    tailnet_user: str | None = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

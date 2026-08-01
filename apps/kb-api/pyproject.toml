@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Personal Knowledge Base API"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "ai-embeddings",
+    # Both driver extras, not the bare package. AD-010 says a service installs
+    # only the SDK it uses, and this service uses whichever one is configured:
+    # `_build_providers` imports a driver because a key for it is present, so a
+    # bare dependency here makes `KB_API__GEMINI__API_KEY` an image rebuild
+    # rather than an environment change — and, worse, made `openai` absent from
+    # the runtime image entirely while the dev group's extras hid it locally.
+    "ai-embeddings[gemini,openai]",
     "platform-core",
     "platform-db",
     "platform-fastapi",

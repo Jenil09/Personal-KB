@@ -2,11 +2,11 @@
 
 import httpx
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import SecretStr
 
 from platform_core import AuthenticationError
-from platform_fastapi import ApiKeyRegistry, CurrentPrincipal, Principal
+from platform_fastapi import ApiKeyRegistry, CurrentPrincipal, Principal, require_scope
 
 
 @pytest.fixture
@@ -131,3 +131,95 @@ def test_registry_rejects_a_prefix_of_a_real_key() -> None:
 
     with pytest.raises(AuthenticationError):
         registry.resolve("secret")
+
+
+# --- scopes (AD-024) ------------------------------------------------------
+
+
+@pytest.fixture
+def scoped(make_app, client_for):
+    """An app whose one route needs `write`, with `n8n` holding only `search`."""
+    router = APIRouter()
+
+    @router.delete("/thing", dependencies=[Depends(require_scope("write"))])
+    async def remove() -> dict[str, bool]:
+        return {"removed": True}
+
+    @router.get("/thing", dependencies=[Depends(require_scope("search"))])
+    async def read() -> dict[str, bool]:
+        return {"read": True}
+
+    return client_for(
+        make_app(
+            routers=[router],
+            api_key_scopes={"n8n": frozenset({"search"}), "cli": frozenset({"search", "write"})},
+        )
+    )
+
+
+async def test_a_search_scoped_key_cannot_delete(scoped, valid_key: str) -> None:
+    """The n8n key is the reason AD-024 exists: it must not be able to purge the corpus."""
+    async with scoped as client:
+        response = await client.delete("/v1/thing", headers=_auth(valid_key))
+
+    assert response.status_code == 403
+    body = response.json()
+    assert body["code"] == "insufficient_scope"
+    assert body["required_scope"] == "write"
+
+
+async def test_the_same_key_still_reads(scoped, valid_key: str) -> None:
+    async with scoped as client:
+        assert (await client.get("/v1/thing", headers=_auth(valid_key))).status_code == 200
+
+
+async def test_a_write_scoped_key_deletes(scoped, other_key: str) -> None:
+    async with scoped as client:
+        assert (await client.delete("/v1/thing", headers=_auth(other_key))).status_code == 200
+
+
+async def test_a_missing_key_is_401_not_403(scoped) -> None:
+    """Order matters: authentication runs first, so an anonymous caller learns
+    nothing about which scopes a route needs."""
+    async with scoped as client:
+        response = await client.delete("/v1/thing")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+
+
+async def test_a_key_with_no_scope_entry_is_unrestricted(make_app, client_for, valid_key) -> None:
+    """The permissive default. Configuring keys and forgetting scopes leaves a
+    working service rather than one that refuses every valid key."""
+    router = APIRouter()
+
+    @router.delete("/thing", dependencies=[Depends(require_scope("write"))])
+    async def remove() -> dict[str, bool]:
+        return {"removed": True}
+
+    async with client_for(make_app(routers=[router])) as client:
+        assert (await client.delete("/v1/thing", headers=_auth(valid_key))).status_code == 200
+
+
+def test_registry_carries_the_grants_it_was_given() -> None:
+    registry = ApiKeyRegistry(
+        {"n8n": SecretStr("one"), "cli": SecretStr("two")},
+        {"n8n": frozenset({"search"})},
+    )
+
+    assert registry.resolve("one") == Principal(key_id="n8n", scopes=frozenset({"search"}))
+    # No entry, so unrestricted — `None`, not an empty set.
+    assert registry.resolve("two") == Principal(key_id="cli", scopes=None)
+
+
+@pytest.mark.parametrize(
+    ("scopes", "scope", "expected"),
+    [
+        (None, "write", True),
+        (frozenset({"search", "write"}), "write", True),
+        (frozenset({"search"}), "write", False),
+        (frozenset(), "search", False),
+    ],
+)
+def test_has_scope(scopes: frozenset[str] | None, scope: str, expected: bool) -> None:
+    assert Principal(key_id="k", scopes=scopes).has_scope(scope) is expected

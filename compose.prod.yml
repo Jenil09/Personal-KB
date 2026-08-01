@@ -1,0 +1,231 @@
+# Production stack for the VPS. Docker Compose, not podman-compose (AD-022).
+#
+# ---------------------------------------------------------------------------
+# THERE IS NO `ports:` KEY IN THIS FILE, AND ADDING ONE IS A REVIEW FAILURE.
+# ---------------------------------------------------------------------------
+#
+# AD-023: no container in this stack publishes a host port — not kb-api, not
+# Postgres, not Chroma. Docker installs its DNAT rules ahead of the host
+# firewall, so `ports: - "8000:8000"` is world-reachable no matter what `ufw`
+# says, and the mistake is a missing IP prefix rather than a visibly wrong line.
+# Removing the key entirely turns "bind to the right address" — a rule that has
+# to be got right every time it is written — into a property checkable by grep.
+# `tests/test_compose_prod.py` does exactly that, and `deploy/verify-exposure.sh`
+# checks it again against the running stack.
+#
+# Networks (Design §6). kb-api sits on all four; every other container sits on
+# exactly one. That asymmetry is the design: each consumer and each dependency
+# reaches kb-api and nothing else, so n8n cannot address Postgres and the tailnet
+# cannot address Chroma.
+#
+#   kb-internal  internal: true   Postgres, Chroma, kb-api — no route off host
+#   kb-shared    external: true   n8n → http://kb-api:8000, plain HTTP
+#   kb-tailnet                    tailscale → kb-api, operator entry point
+#   egress                        kb-api → the embedding provider, outbound only
+#
+# `kb-shared` is external because n8n owns it; this stack joins, it does not
+# create. Create it once on the host if it does not exist:
+#
+#     docker network create kb-shared
+#
+# One secrets file serves both roles, which is why every command in the runbook
+# passes it explicitly:
+#
+#     docker compose --env-file .env.prod -f compose.prod.yml up -d
+#
+# `--env-file` is what compose interpolates `${…}` from; `env_file:` is what it
+# injects into a container. Without the flag, compose interpolates from `.env`
+# and the Postgres credentials come out empty.
+#
+# Memory limits are sized against the 4 GB box with the Phase 6 measurement in
+# hand: Chroma was 188 MB resident at full corpus, not the 60-80 MB estimated.
+
+name: kb
+
+services:
+  # --- datastores ----------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${KB_POSTGRES_USER:?set in .env.prod}
+      POSTGRES_PASSWORD: ${KB_POSTGRES_PASSWORD:?set in .env.prod}
+      POSTGRES_DB: ${KB_POSTGRES_DB:?set in .env.prod}
+      # The audit schema holds full search query text (AD-013), so this database
+      # carries the same sensitivity as the knowledge base itself.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - kb-postgres-data:/var/lib/postgresql/data
+    networks: [kb-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  chroma:
+    image: chromadb/chroma:1.5.0
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - kb-chroma-data:/data
+    networks: [kb-internal]
+    # The chroma image ships no curl, wget, or python on PATH — only bash.
+    # /dev/tcp is the one HTTP client available (compose.dev.yml, Phase 0).
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/localhost/8000 && printf "GET /api/v2/heartbeat HTTP/1.0\r\n\r\n" >&3 && grep -q heartbeat <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *logging
+
+  # --- migrations ----------------------------------------------------------
+
+  # An init container, not app startup. Two reasons, and the second is the one
+  # that matters: a migration run from the lifespan handler happens once per
+  # replica and once per restart loop, so a failing migration becomes a crash
+  # loop that runs it again every few seconds. Here it runs once, and `kb-api`
+  # does not start at all unless it exited zero.
+  #
+  # `DatabaseConfig` exists for this container (kb_api/config.py): it carries a
+  # DSN and nothing else, so `alembic upgrade head` does not fail on a missing
+  # KB_API__API_KEYS that the migration genuinely has no use for.
+  migrate:
+    image: ${KB_API_IMAGE:-kb-api:latest}
+    build:
+      context: .
+      dockerfile: apps/kb-api/Containerfile
+    restart: "no"
+    working_dir: /app/apps/kb-api
+    command: ["alembic", "upgrade", "head"]
+    env_file: [.env.prod]
+    networks: [kb-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  # --- the service ---------------------------------------------------------
+
+  kb-api:
+    image: ${KB_API_IMAGE:-kb-api:latest}
+    build:
+      context: .
+      dockerfile: apps/kb-api/Containerfile
+    restart: unless-stopped
+    env_file: [.env.prod]
+    environment:
+      KB_API__ENV: production
+      KB_API__AUDIT__SPILL_PATH: /app/data/audit.spill.jsonl
+      KB_API__CHROMA__HOST: chroma
+      KB_API__CHROMA__PORT: "8000"
+    volumes:
+      # AD-013's guarantee is durability, so the spill outlives the container it
+      # was written by. A tmpfs or an anonymous volume here would mean a stack
+      # replacement during a Postgres outage loses exactly the records the spill
+      # exists to keep.
+      - kb-audit-spill:/app/data
+    networks: [kb-internal, kb-shared, kb-tailnet, egress]
+    expose: ["8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # `/health` is the one unauthenticated route (Phase 2). `degraded` returns
+      # 200 on purpose — a non-empty audit spill needs an operator, not a
+      # restart — so a status check is the correct probe and a body check would
+      # take the container down over a backlog that is already draining.
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  # --- operator entry point ------------------------------------------------
+
+  # AD-023: the tailnet interface lives inside Docker, alongside the service,
+  # rather than on the host. Userspace networking, so it needs neither NET_ADMIN
+  # nor /dev/net/tun.
+  #
+  # `network_mode: service:kb-api` was rejected: it replaces a container's
+  # networks wholesale, so kb-api would lose kb-shared and kb-internal and the
+  # n8n path would go down with it.
+  #
+  # State in a named volume, or every restart burns a fresh node and a fresh
+  # auth key. Use an OAuth client or a reusable, ephemeral-free auth key.
+  tailscale:
+    image: tailscale/tailscale:v1.90.6
+    restart: unless-stopped
+    hostname: ${KB_TAILSCALE_HOSTNAME:-kb-api}
+    environment:
+      TS_AUTHKEY: ${KB_TAILSCALE_AUTHKEY:?set in .env.prod}
+      TS_USERSPACE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      # Proxies the tailnet to kb-api by container name, over kb-tailnet. The
+      # hop is why the tier-1 `client_ip` for operator traffic is this
+      # container's Docker address; `Tailscale-User-Login`, which `serve`
+      # forwards, carries the real identity and is recorded on the row.
+      TS_SERVE_CONFIG: /config/serve.json
+      # Empty by default. `--advertise-tags` belongs here if the tailnet ACL
+      # defines a tag for this node, and breaks authentication if it does not.
+      TS_EXTRA_ARGS: ${KB_TAILSCALE_EXTRA_ARGS:-}
+    volumes:
+      - kb-tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    networks: [kb-tailnet]
+    depends_on:
+      kb-api:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+networks:
+  kb-internal:
+    internal: true
+  kb-shared:
+    external: true
+  kb-tailnet:
+  egress:
+
+volumes:
+  kb-postgres-data:
+  kb-chroma-data:
+  kb-audit-spill:
+  kb-tailscale-state:

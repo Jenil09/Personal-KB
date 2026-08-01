@@ -1,0 +1,37 @@
+meta {
+  name: malformed bearer token
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Basic {{api_key}}
+}
+
+body:json {
+  {
+    "query": "anything"
+  }
+}
+
+docs {
+  A valid key presented under the wrong scheme. AD-011: the answer is the same
+  `401` and the same `unauthenticated` code as a missing header or an unknown
+  key — the distinction lives in `detail` and in the audit row, never in the
+  contract, so a rejection cannot be used to probe which keys exist.
+
+  The request still produces a tier-1 audit row, with the presented credential
+  fingerprinted rather than stored (AD-013).
+}
+
+assert {
+  res.status: eq 401
+  res.body.code: eq unauthenticated
+  res.headers['www-authenticate']: eq Bearer
+}

@@ -1,0 +1,27 @@
+meta {
+  name: get document
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/v1/documents/{{document_id}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  PRD §6.5. The document with its original content and its provenance —
+  `ingested_by_key_id` and `ingested_from_ip`, recorded from what the transport
+  saw rather than from the request body (AD-014).
+
+  `document_id` is set by `02-documents/ingest document`, so run that first.
+  Requires the `search` scope.
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{document_id}}
+  res.body.content: isString
+  res.body.status: eq indexed
+}

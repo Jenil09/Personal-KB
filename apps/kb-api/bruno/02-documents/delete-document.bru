@@ -1,0 +1,30 @@
+meta {
+  name: delete document
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/v1/documents/{{document_id}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  PRD §6.6. Removes the document from both stores — the row from PostgreSQL and
+  the vectors from Chroma.
+
+  **Idempotent.** `204` whether or not the document existed, which is what makes
+  a retry safe: a client that timed out mid-delete cannot tell which side of the
+  vector purge it stopped on. The `X-Deleted` header reports which of the two
+  happened, for a caller that wants to know; the status deliberately does not.
+
+  Requires the `write` scope, so the n8n key cannot run this — see
+  `99-negative/delete without the write scope`.
+
+  Run this last: it removes the document the other requests in this folder use.
+}
+
+assert {
+  res.status: eq 204
+}

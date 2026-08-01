@@ -1,0 +1,38 @@
+meta {
+  name: stats
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/stats
+  body: none
+  auth: inherit
+}
+
+docs {
+  PRD §6.7. Three groups of numbers.
+
+  **The corpus** — documents by status and by collection, chunk count, tokens
+  stored. PostgreSQL is the system of record (AD-003).
+
+  **The index** — one entry per configured provider, with the vectors its
+  collection holds. Reported beside the corpus counts and never reconciled with
+  them: a disagreement is a fact about the deployment worth seeing. `vectors:
+  null` means Chroma could not be reached, which is different from `0`.
+
+  **The observability itself** — `telemetry_dropped`, `audit_spill_depth`, and
+  `recent_bursts`. These are the reason this is an endpoint rather than a log
+  line: a dropped tier-2 record and a spilled tier-1 record are both invisible
+  by construction, so the only way either becomes known is by being asked for.
+
+  Requires the `write` scope (AD-024).
+}
+
+assert {
+  res.status: eq 200
+  res.body.total_documents: isNumber
+  res.body.collections: isArray
+  res.body.audit_spill_depth: eq 0
+  res.body.telemetry_dropped: eq 0
+}

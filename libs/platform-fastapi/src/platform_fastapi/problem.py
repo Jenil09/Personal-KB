@@ -28,11 +28,26 @@ from starlette.responses import Response
 
 from platform_core import PlatformError, get_logger, get_request_id
 
-__all__ = ["PROBLEM_CONTENT_TYPE", "install_error_handlers", "problem_response"]
+__all__ = [
+    "ERROR_CODE_STATE_ATTR",
+    "PROBLEM_CONTENT_TYPE",
+    "REQUEST_ID_STATE_ATTR",
+    "install_error_handlers",
+    "problem_response",
+]
 
 PROBLEM_CONTENT_TYPE = "application/problem+json"
 
 REQUEST_ID_STATE_ATTR = "request_id"
+
+ERROR_CODE_STATE_ATTR = "error_code"
+"""Where the code of the problem response lands, for the tier-1 audit row.
+
+Stamped here because this is the single place an error becomes a response, so
+the row records the code the caller actually received rather than one inferred
+from a status. The middleware would otherwise have to buffer and re-parse the
+body to learn it.
+"""
 
 # Members RFC 9457 defines. An error's `context` is merged in alongside them as
 # extension members, so it must not overwrite these.
@@ -69,6 +84,10 @@ def problem_response(
             if key not in _RESERVED
         }
     )
+
+    # The scope's own dict, not `request.state`: the scope outlives the request
+    # object, and the audit middleware reads it after this response has been sent.
+    request.scope.setdefault("state", {})[ERROR_CODE_STATE_ATTR] = code
 
     response_headers = dict(headers or {})
     if status == HTTPStatus.UNAUTHORIZED:
@@ -113,6 +132,7 @@ def _handle_platform_error(request: Request, exc: Exception) -> Response:
         code=error.code,
         detail=error.detail,
         extensions=error.context,
+        headers=error.headers,
     )
 
 

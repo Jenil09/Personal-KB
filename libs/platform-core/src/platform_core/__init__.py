@@ -9,11 +9,13 @@ from platform_core.context import (
 )
 from platform_core.errors import (
     AuthenticationError,
+    AuthorizationError,
     ConfigurationError,
     ConflictError,
     NotFoundError,
     PayloadTooLargeError,
     PlatformError,
+    RateLimitedError,
     UpstreamError,
     ValidationError,
 )
@@ -23,6 +25,7 @@ from platform_core.settings import BaseServiceSettings, Environment, LogLevel
 __all__ = [
     "REQUEST_ID_HEADER",
     "AuthenticationError",
+    "AuthorizationError",
     "BaseServiceSettings",
     "ConfigurationError",
     "ConflictError",
@@ -31,6 +34,7 @@ __all__ = [
     "NotFoundError",
     "PayloadTooLargeError",
     "PlatformError",
+    "RateLimitedError",
     "UpstreamError",
     "ValidationError",
     "__version__",

@@ -16,7 +16,7 @@ a commitment. Nothing above `adapters/chroma` imports `chromadb`.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,13 +26,14 @@ from kb_api.domain.documents import (
     Chunk,
     Document,
     DocumentFilter,
+    DocumentPage,
     DocumentStatus,
     NewChunk,
     NewDocument,
 )
 from kb_api.domain.vectors import VectorMatch, VectorRecord
 
-__all__ = ["ChunkStore", "DocumentStore", "VectorStore"]
+__all__ = ["ChunkStore", "DocumentStore", "TelemetryPort", "VectorStore"]
 
 
 class VectorStore(Protocol):
@@ -100,6 +101,15 @@ class DocumentStore(Protocol):
         self, session: AsyncSession, filters: DocumentFilter, *, limit: int | None = None
     ) -> tuple[UUID, ...]: ...
 
+    async def list(
+        self,
+        session: AsyncSession,
+        filters: DocumentFilter | None = None,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> DocumentPage: ...
+
     async def find_pending(
         self, session: AsyncSession, *, collection: str | None = None, limit: int = 100
     ) -> tuple[Document, ...]: ...
@@ -134,3 +144,55 @@ class ChunkStore(Protocol):
     ) -> dict[str, Chunk]: ...
 
     async def delete_for_document(self, session: AsyncSession, document_id: UUID) -> int: ...
+
+
+class TelemetryPort(Protocol):
+    """Tier-2 emission, as the flows see it (AD-013).
+
+    Three verbs, no tables. Which table an event lands in is the adapter's
+    knowledge (`adapters/postgres/telemetry.py`), and a service that knew it
+    would be importing the schema it is supposed to be insulated from.
+
+    Every method returns `None` and none of them are `async`. Tier 2 is
+    best-effort and off the request path by construction: a flow emitting an
+    event is in the middle of serving a request, so it must not be able to wait
+    on the sink, and it must not be able to fail because of one either.
+    """
+
+    def tokens_used(
+        self,
+        *,
+        request_id: UUID,
+        provider: str,
+        model: str,
+        operation: str,
+        input_tokens: int,
+        token_source: str,
+        api_calls: int = 1,
+        billable_characters: int | None = None,
+    ) -> None: ...
+
+    def ingest_completed(
+        self,
+        *,
+        request_id: UUID,
+        collection: str,
+        outcome: str,
+        document_id: UUID | None = None,
+        chunks_created: int = 0,
+        chunks_reused: int = 0,
+        content_bytes: int | None = None,
+        duration_ms: int | None = None,
+        stage_timings_ms: Mapping[str, int] | None = None,
+    ) -> None: ...
+
+    def error_occurred(
+        self,
+        *,
+        request_id: UUID,
+        error_code: str,
+        exception_type: str,
+        message: str,
+        stack: str | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> None: ...

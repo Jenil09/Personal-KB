@@ -51,6 +51,17 @@ request_logs = Table(
     Column("operation", Text),
     Column("payload", JSONB),
     Column("repeat_burst", Boolean, nullable=False, server_default=text("false")),
+    # AD-014's middle threshold. The daily anomaly count flags rather than
+    # rejects, so this column is the only place the crossing is recorded — a
+    # request past it is served normally and looks, from every other column,
+    # exactly like one below it.
+    Column("anomaly", Boolean, nullable=False, server_default=text("false")),
+    # AD-023. Operator traffic arrives through the tailscale container, so every
+    # such request carries that one proxy address in `client_ip` — worthless for
+    # attribution on its own. `tailscale serve` forwards the tailnet identity in
+    # `Tailscale-User-Login`, and this is where it lands. NULL for the n8n path,
+    # which needs no such recovery because its `client_ip` is its own.
+    Column("tailnet_user", Text),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_request_logs_created_at", text("created_at DESC")),
     Index("ix_request_logs_key_id_created_at", "key_id", text("created_at DESC")),
@@ -64,5 +75,14 @@ request_logs = Table(
         "ix_request_logs_repeat_burst",
         "repeat_burst",
         postgresql_where=text("repeat_burst"),
+    ),
+    # Partial, and spelled as a bare column rather than `anomaly IS TRUE`:
+    # Postgres does not make the step from `x IS TRUE` to `x` when proving a
+    # query's predicate implies the index's, so the other spelling would sit
+    # outside this index permanently (Phase 4).
+    Index(
+        "ix_request_logs_anomaly",
+        "anomaly",
+        postgresql_where=text("anomaly"),
     ),
 )

@@ -5,6 +5,11 @@ description = "App factory, auth, problem+json errors, and health checks for Red
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "platform-core",
+    # AD-018: `AuditRecord` and the tier-1 writer are shared vocabulary, so the
+    # audit middleware imports them rather than restating the row's shape at
+    # this boundary — restating it is how the writer, the spill format, and the
+    # columns drift apart, which is the thing AD-018 exists to prevent.
+    "platform-db",
     "fastapi>=0.121.0",
 ]
 
@@ -18,3 +23,4 @@ module-root = "src"
 
 [tool.uv.sources]
 platform-core = { workspace = true }
+platform-db = { workspace = true }

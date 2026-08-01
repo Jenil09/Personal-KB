@@ -1,0 +1,39 @@
+meta {
+  name: delete without the write scope
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{base_url}}/v1/documents/{{document_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{search_api_key}}
+}
+
+docs {
+  AD-024, and the reason it exists.
+
+  `search_api_key` is the key the n8n workflow holds. That workflow processes
+  scraped, untrusted content, so a prompt injection that reaches its credential
+  must not be able to purge the corpus. Attribution alone would tell you
+  afterwards which key did it; the scope is what stops it happening.
+
+  The failure is a `403` naming the missing scope — deliberately more
+  informative than the `401` above it. A caller reaching here already holds a
+  valid key and already knows it exists, so telling it which scope it lacks is
+  diagnosable rather than leaky.
+
+  Set `search_api_key` in the environment to a key configured with
+  `KB_API__API_KEY_SCOPES=<key_id>:search`. Skip this request if the deployment
+  has only one key.
+}
+
+assert {
+  res.status: eq 403
+  res.body.code: eq insufficient_scope
+  res.body.required_scope: eq write
+}

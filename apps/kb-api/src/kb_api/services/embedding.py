@@ -24,6 +24,17 @@ class EmbeddedTexts:
     vectors: tuple[EmbeddingVector, ...]
     tokens: int
     calls: int
+    token_source: str = "exact"
+    """Where the count came from (AD-017).
+
+    Carried alongside the number rather than derived from the provider name by
+    the reader, because the whole point of AD-017 is that an estimate must not
+    be mistaken for a billing figure — and it would be, the first time someone
+    summed this column without checking which provider produced each row.
+
+    Degraded across a multi-batch call: if any batch was estimated the total is
+    estimated, since a mixed total is not exact.
+    """
 
 
 async def embed_in_batches(provider: EmbeddingProvider, texts: Sequence[str]) -> EmbeddedTexts:
@@ -41,8 +52,11 @@ async def embed_in_batches(provider: EmbeddingProvider, texts: Sequence[str]) ->
 
     vectors: list[EmbeddingVector] = []
     tokens = 0
+    sources: set[str] = set()
     for batch in batches:
         result = await provider.embed_documents(batch)
         vectors.extend(result.vectors)
         tokens += result.tokens
-    return EmbeddedTexts(tuple(vectors), tokens, len(batches))
+        sources.add(str(result.token_source))
+    source = sources.pop() if len(sources) == 1 else "estimated"
+    return EmbeddedTexts(tuple(vectors), tokens, len(batches), source)

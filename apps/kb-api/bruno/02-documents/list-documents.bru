@@ -1,0 +1,41 @@
+meta {
+  name: list documents
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/v1/documents?limit=20&offset=0
+  body: none
+  auth: inherit
+}
+
+params:query {
+  limit: 20
+  offset: 0
+  ~type: architecture
+  ~tags: ansible
+  ~match_all_tags: false
+  ~source: redshift_architecture.md
+  ~collection: {{collection}}
+}
+
+docs {
+  PRD §6.4. Paginated and filterable. The listing is a catalogue, not an export:
+  entries carry metadata and no `content`, which is what `02-documents/get
+  document` is for.
+
+  `tags` is repeatable and matches any of the given tags; `match_all_tags=true`
+  requires all of them. Tag filtering resolves through PostgreSQL, not Chroma
+  metadata (AD-005).
+
+  Requires the `search` scope (AD-024), so the n8n key can run this.
+}
+
+assert {
+  res.status: eq 200
+  res.body.documents: isArray
+  res.body.total: isNumber
+  res.body.limit: eq 20
+  res.responseTime: lt 1000
+}
