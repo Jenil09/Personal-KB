@@ -82,6 +82,18 @@ class KbApiSettings(HttpServiceSettings):
     # time. Whatever is left is picked up by the next restart.
     reconciliation_limit: int = Field(default=100, ge=1)
 
+    # The query-embedding cache (AD-008, AD-021). Design §8 measured the hit
+    # rate as near zero for the n8n workload, so these are sized to be free
+    # rather than effective: 512 vectors at 1536 dimensions is roughly 3 MB.
+    # Zero entries disables it.
+    query_cache_size: int = Field(default=512, ge=0)
+    query_cache_ttl_seconds: float = Field(default=900.0, gt=0)
+
+    # AD-005's `$in` clause is built from this many document IDs at most. The
+    # corpus is ~25 documents, so the cap exists for the pathological case, not
+    # the expected one.
+    tag_filter_limit: int = Field(default=2000, ge=1)
+
 
 @lru_cache(maxsize=1)
 def get_database_config() -> DatabaseConfig:

@@ -1,0 +1,29 @@
+meta {
+  name: search with a misspelled filter key
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "query": "cilium",
+    "filters": {
+      "tag": ["ansible"]
+    }
+  }
+}
+
+docs {
+  `tag` is not `tags`. Rejected rather than ignored: a filter that silently
+  fails to apply returns a larger result set that looks entirely plausible.
+}
+
+assert {
+  res.status: eq 422
+}
