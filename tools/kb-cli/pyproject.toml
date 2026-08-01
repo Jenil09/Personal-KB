@@ -1,0 +1,41 @@
+[project]
+name = "kb-cli"
+version = "0.1.0"
+description = "Operator client for kb-api: ingestion, search, and an interactive document browser"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # `platform-core` for the error hierarchy and the settings base, and nothing
+    # else from the workspace. This tool is an HTTP client of a deployed service
+    # (AD-025); depending on `kb-api` would let it drift into importing the
+    # service's internals and stop being one.
+    "platform-core",
+    "httpx>=0.28.0",
+    # Resolves the per-OS config directory. Two dozen lines to hand-roll and all
+    # of them wrong on one platform or another; this is the library the rest of
+    # the Python tooling ecosystem already agrees on.
+    "platformdirs>=4.5.0",
+    "typer>=0.20.0",
+    "rich>=14.0.0",
+    "textual>=6.0.0",
+]
+
+[project.scripts]
+kb = "kb_cli.__main__:main"
+
+[dependency-groups]
+dev = [
+    # The Textual screens are driven headlessly through `App.run_test`, which
+    # needs the pilot API the dev extra ships.
+    "textual-dev>=1.7.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "kb_cli"
+module-root = "src"
+
+[tool.uv.sources]
+platform-core = { workspace = true }

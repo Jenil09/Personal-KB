@@ -1,0 +1,158 @@
+/* Layout only. No colour literals beyond the theme's own variables, so the
+   app follows whatever Textual theme the terminal is running — a hard-coded
+   palette here is what makes a TUI unreadable on a light background. */
+
+Screen {
+    background: $surface;
+}
+
+/* --- documents ---------------------------------------------------------- */
+
+#documents-body, #search-body {
+    height: 1fr;
+}
+
+#documents-left, #search-left {
+    width: 3fr;
+    border-right: solid $panel;
+}
+
+#documents-preview, #search-preview {
+    width: 2fr;
+    padding: 0 1;
+}
+
+#documents-table, #search-table {
+    height: 1fr;
+}
+
+#documents-count {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#filter {
+    dock: top;
+}
+
+#preview-title, #hit-title {
+    padding-top: 1;
+}
+
+#preview-meta, #hit-meta {
+    padding-bottom: 1;
+}
+
+#preview-body, #hit-text {
+    color: $text;
+}
+
+/* --- search ------------------------------------------------------------- */
+
+#query {
+    dock: top;
+}
+
+#search-summary {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+/* --- viewer ------------------------------------------------------------- */
+
+#viewer-title {
+    padding: 1 2 0 2;
+    text-style: bold;
+}
+
+#viewer-meta {
+    padding: 0 2 1 2;
+}
+
+#viewer-body {
+    height: 1fr;
+    padding: 0 2;
+}
+
+/* --- status and settings ------------------------------------------------ */
+
+#status-body, #settings-body {
+    height: 1fr;
+    padding: 1 2;
+}
+
+.settings-section {
+    padding-top: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#settings-body Input {
+    margin-bottom: 1;
+}
+
+#settings-buttons {
+    height: auto;
+    padding-top: 1;
+}
+
+#settings-buttons Button {
+    margin-right: 2;
+}
+
+#settings-path {
+    padding-top: 1;
+}
+
+/* --- modals ------------------------------------------------------------- */
+
+ConfirmScreen {
+    align: center middle;
+}
+
+#confirm-grid {
+    grid-size: 2 3;
+    grid-gutter: 1 2;
+    grid-rows: auto 1fr auto;
+    padding: 1 2;
+    width: 64;
+    height: auto;
+    border: thick $error;
+    background: $surface;
+}
+
+#confirm-question {
+    column-span: 2;
+    text-style: bold;
+}
+
+#confirm-detail {
+    column-span: 2;
+    color: $text-muted;
+}
+
+MetadataScreen {
+    align: center middle;
+}
+
+#metadata-dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#metadata-heading {
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#metadata-buttons {
+    grid-size: 2 1;
+    grid-gutter: 1 2;
+    height: auto;
+    padding-top: 1;
+}
