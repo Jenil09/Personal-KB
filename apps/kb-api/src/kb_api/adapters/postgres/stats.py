@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kb_api.adapters.postgres.tables import chunks, documents
 from kb_api.adapters.postgres.telemetry_tables import token_usage_logs
-from platform_db import repeat_bursts
+from platform_db import request_logs
 
 __all__ = ["CorpusStats", "StatsRepository", "TokenUsage"]
 
@@ -101,15 +101,27 @@ class StatsRepository:
             exact_tokens=int(exact), estimated_tokens=int(estimated), api_calls=int(calls)
         )
 
-    async def recent_bursts(self, session: AsyncSession, *, days: int = 7, limit: int = 20) -> int:
+    async def recent_bursts(self, session: AsyncSession, *, days: int = 7) -> int:
         """How many requests were flagged as an identical-query burst (AD-014).
 
-        The canned forensic query from `platform-db`, not a `SELECT` written
-        here: the query and the partial index it rides have to agree, and they
-        only reliably do when one thing owns both.
+        A count, not a wrapped `repeat_bursts()`. The canned forensic query is
+        the right thing when you want the rows — it carries the `LIMIT` that
+        keeps an incident investigation from becoming the second outage — but
+        counting a limited subquery saturates at the limit, so a runaway loop of
+        four thousand identical searches would report as whatever the cap was.
+        This field exists to be believed at a glance during exactly that
+        incident.
+
+        The predicate is the bare column rather than `repeat_burst IS TRUE`, so
+        it still rides the partial `ix_request_logs_repeat_burst`: Postgres does
+        not make the step from `x IS TRUE` to `x` when proving a query's
+        predicate implies the index's, and the index holds only the flagged rows
+        — in normal operation, none.
         """
         since = datetime.now(UTC) - timedelta(days=days)
         result = await session.execute(
-            select(func.count()).select_from(repeat_bursts(since=since, limit=limit).subquery())
+            select(func.count())
+            .select_from(request_logs)
+            .where(request_logs.c.repeat_burst, request_logs.c.created_at >= since)
         )
         return int(result.scalar_one())
