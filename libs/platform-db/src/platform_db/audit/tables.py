@@ -56,6 +56,12 @@ request_logs = Table(
     # request past it is served normally and looks, from every other column,
     # exactly like one below it.
     Column("anomaly", Boolean, nullable=False, server_default=text("false")),
+    # AD-023. Operator traffic arrives through the tailscale container, so every
+    # such request carries that one proxy address in `client_ip` — worthless for
+    # attribution on its own. `tailscale serve` forwards the tailnet identity in
+    # `Tailscale-User-Login`, and this is where it lands. NULL for the n8n path,
+    # which needs no such recovery because its `client_ip` is its own.
+    Column("tailnet_user", Text),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_request_logs_created_at", text("created_at DESC")),
     Index("ix_request_logs_key_id_created_at", "key_id", text("created_at DESC")),

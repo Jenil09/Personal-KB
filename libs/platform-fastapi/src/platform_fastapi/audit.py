@@ -59,6 +59,10 @@ __all__ = [
 OPERATION_STATE_ATTR = "audit_operation"
 PAYLOAD_STATE_ATTR = "audit_payload"
 
+# A tailnet login is an email address or a `tag:` name. This is generous for
+# both, and the point is a ceiling rather than a validation.
+_TAILNET_USER_MAX_CHARS = 255
+
 _logger = get_logger("platform.audit")
 
 
@@ -171,6 +175,7 @@ class AuditMiddleware:
             payload=payload,
             repeat_burst=self._repeat_burst(scope, principal, payload),
             anomaly=bool(state.get(ANOMALY_STATE_ATTR, False)),
+            tailnet_user=_tailnet_user(headers),
         )
         await self._trail.record(record)
         self._observe(record, failure)
@@ -265,6 +270,30 @@ def _presented_fingerprint(headers: Headers) -> dict[str, Any] | None:
     if not separator or scheme.lower() != "bearer" or not credential.strip():
         return None
     return {"key_fingerprint": fingerprint_credential(credential.strip())}
+
+
+def _tailnet_user(headers: Headers) -> str | None:
+    """The tailnet identity behind the proxy hop (AD-023).
+
+    Operator traffic reaches this service through the `tailscale` container, so
+    `client_ip` is that one container's Docker address for every operator request
+    and says nothing about who made it. `tailscale serve` sets this header from
+    the tailnet's own identity, which is the only reason it is trusted here while
+    `X-Forwarded-For` deliberately is not: under AD-023 the two ways in are a
+    Docker network and this proxy, and nothing on either path can set it except
+    the proxy itself.
+
+    That trust is a property of the deployment, not of the header. A stack that
+    ever publishes a host port — the thing `compose.prod.yml` has no `ports:` key
+    in order to prevent — makes this forgeable by anyone who can reach the
+    listener, which is the second reason that rule is checked rather than
+    assumed.
+
+    Bounded, because it is written to an unbounded `TEXT` column on every request
+    and a header is caller-supplied. Empty means absent.
+    """
+    value = headers.get("tailscale-user-login", "").strip()
+    return value[:_TAILNET_USER_MAX_CHARS] or None
 
 
 def _client_ip(scope: Scope) -> str | None:

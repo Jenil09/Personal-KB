@@ -212,6 +212,77 @@ async def test_the_peer_address_is_recorded_when_it_is_one(client, trail, valid_
     assert str(trail.only.client_ip) == "127.0.0.1"
 
 
+# --- the tailnet identity behind the proxy hop (AD-023) --------------------
+
+
+async def test_the_tailnet_login_is_recorded_when_the_proxy_forwards_one(
+    client, trail, valid_key
+) -> None:
+    """Without this, every operator request in the trail is one constant address.
+
+    `client_ip` is the `tailscale` container's, identically, for all of them —
+    the proxy hop is the whole point of AD-023's entry point — so this header is
+    the only thing that says which human made the request.
+    """
+    async with client as http:
+        await http.post(
+            "/v1/search",
+            json={"query": "x"},
+            headers=_auth(valid_key) | {"Tailscale-User-Login": "jainil@example.com"},
+        )
+
+    assert trail.only.tailnet_user == "jainil@example.com"
+
+
+async def test_the_n8n_path_records_no_tailnet_user(client, trail, valid_key) -> None:
+    """n8n reaches kb-api over `kb-shared` with no proxy in between, so its own
+    `client_ip` is the attribution and this column is correctly empty."""
+    async with client as http:
+        await http.post("/v1/search", json={"query": "x"}, headers=_auth(valid_key))
+
+    assert trail.only.tailnet_user is None
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+async def test_a_blank_tailnet_header_is_absent_not_empty(client, trail, valid_key, value) -> None:
+    """An empty string in the column reads as an answer. There isn't one."""
+    async with client as http:
+        await http.post(
+            "/v1/search",
+            json={"query": "x"},
+            headers=_auth(valid_key) | {"Tailscale-User-Login": value},
+        )
+
+    assert trail.only.tailnet_user is None
+
+
+async def test_a_long_tailnet_header_is_bounded(client, trail, valid_key) -> None:
+    """The column is unbounded `TEXT` and this is written on every request, so a
+    caller sending a megabyte header must not put a megabyte in the trail."""
+    async with client as http:
+        await http.post(
+            "/v1/search",
+            json={"query": "x"},
+            headers=_auth(valid_key) | {"Tailscale-User-Login": "a" * 5000},
+        )
+
+    assert trail.only.tailnet_user is not None
+    assert len(trail.only.tailnet_user) == 255
+
+
+async def test_a_rejected_request_still_records_its_tailnet_login(client, trail) -> None:
+    """An operator whose key is wrong is exactly who the trail is for."""
+    async with client as http:
+        await http.post(
+            "/v1/search",
+            json={"query": "x"},
+            headers=_auth("wrong") | {"Tailscale-User-Login": "jainil@example.com"},
+        )
+
+    assert trail.only.outcome is Outcome.AUTH_FAILED
+    assert trail.only.tailnet_user == "jainil@example.com"
+
+
 async def test_a_service_without_a_trail_still_serves(make_app, client_for, router, valid_key):
     """The audit layer is optional to assemble and mandatory to deploy."""
     async with client_for(make_app(routers=[router])) as http:
