@@ -1,0 +1,34 @@
+meta {
+  name: search an unpopulated collection
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "query": "anything at all",
+    "provider": "gemini"
+  }
+}
+
+docs {
+  A 409 as long as nothing has been ingested under `gemini`. One collection is
+  bound to one model (AD-006), so a provider with an empty collection is a
+  different answer from an empty result set — and a different one again from
+  the 422 an unconfigured provider gets.
+
+  This request needs `gemini` configured but unused. With no Gemini key set the
+  service answers 422 instead, which is the same distinction seen from the
+  other side.
+}
+
+assert {
+  res.status: eq 409
+  res.body.code: eq conflict
+}

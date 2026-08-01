@@ -46,10 +46,16 @@ from fastapi import FastAPI
 from ai_embeddings import EmbeddingProvider, create_http_client
 from kb_api.adapters.chroma import ChromaVectorStore, create_chroma_client
 from kb_api.adapters.postgres import ChunkRepository, DocumentRepository
-from kb_api.api.v1 import create_documents_router
+from kb_api.api.v1 import create_documents_router, create_search_router
 from kb_api.chunking import CHUNKER_VERSION
 from kb_api.config import KbApiSettings, get_settings
-from kb_api.services import IngestionService, ProviderRegistry, ReconciliationService
+from kb_api.services import (
+    IngestionService,
+    ProviderRegistry,
+    QueryEmbeddingCache,
+    ReconciliationService,
+    SearchService,
+)
 from platform_core import ConfigurationError, get_logger
 from platform_db import Database
 from platform_fastapi import CheckResult, HealthCheck, create_app
@@ -101,6 +107,21 @@ def build_app(
         vectors=vectors,
         providers=registry,
     )
+    # One cache for the process, held by the service rather than module-level:
+    # a single Uvicorn worker (AD-015) means one instance either way, and an
+    # instance attribute is one a test can replace without reaching into a
+    # module. Nothing in it survives a restart, by design.
+    search = SearchService(
+        sessions=database,
+        documents=documents,
+        vectors=vectors,
+        providers=registry,
+        cache=QueryEmbeddingCache(
+            max_entries=resolved.query_cache_size,
+            ttl_seconds=resolved.query_cache_ttl_seconds,
+        ),
+        tag_filter_limit=resolved.tag_filter_limit,
+    )
     reconciliation = ReconciliationService(
         sessions=database,
         documents=documents,
@@ -133,7 +154,7 @@ def build_app(
 
     return create_app(
         resolved,
-        routers=(create_documents_router(ingestion),),
+        routers=(create_search_router(search), create_documents_router(ingestion)),
         lifespan=lifespan,
         health_checks=(
             HealthCheck("postgres", lambda: _probe(database.ping())),

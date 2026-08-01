@@ -29,10 +29,12 @@ from kb_api.domain.vectors import (
     DOCUMENT_ID_KEY,
     TAG_SEPARATOR,
     ChunkMetadata,
+    MatchMetadata,
     VectorMatch,
     VectorRecord,
     chunk_metadata,
     parse_tags,
+    read_metadata,
     render_tags,
 )
 
@@ -48,6 +50,7 @@ __all__ = [
     "DocumentStatus",
     "DocumentStore",
     "IpAddress",
+    "MatchMetadata",
     "NewChunk",
     "NewDocument",
     "VectorMatch",
@@ -57,5 +60,6 @@ __all__ = [
     "collection_name",
     "model_slug",
     "parse_tags",
+    "read_metadata",
     "render_tags",
 ]

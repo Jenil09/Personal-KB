@@ -20,10 +20,12 @@ __all__ = [
     "DOCUMENT_ID_KEY",
     "TAG_SEPARATOR",
     "ChunkMetadata",
+    "MatchMetadata",
     "VectorMatch",
     "VectorRecord",
     "chunk_metadata",
     "parse_tags",
+    "read_metadata",
     "render_tags",
 ]
 
@@ -103,3 +105,39 @@ def chunk_metadata(
     if source is not None:
         metadata["source"] = source
     return metadata
+
+
+@dataclass(frozen=True, slots=True)
+class MatchMetadata:
+    """What a search hit says about the chunk it came from (PRD §6.2).
+
+    The reader for what `chunk_metadata` writes, and it lives beside the writer
+    so the two cannot drift. AD-004 builds the response from the Chroma payload
+    alone, which makes this the only place the metadata is interpreted.
+
+    Every field is defaulted because the payload comes back from a store, not
+    from a schema. A vector written by an earlier build, or a collection an
+    operator has poked at, is a wrong answer to give a caller — not a `500` to
+    raise in the middle of an otherwise good result set.
+    """
+
+    document_id: str = ""
+    title: str = ""
+    type: str = ""
+    tags: tuple[str, ...] = ()
+    source: str | None = None
+    ordinal: int = 0
+
+
+def read_metadata(metadata: ChunkMetadata) -> MatchMetadata:
+    """Undo `chunk_metadata`, turning the pipe-delimited tags back into a list."""
+    source = metadata.get("source")
+    ordinal = metadata.get("ordinal")
+    return MatchMetadata(
+        document_id=str(metadata.get(DOCUMENT_ID_KEY, "")),
+        title=str(metadata.get("title", "")),
+        type=str(metadata.get("type", "")),
+        tags=parse_tags(str(metadata.get("tags", ""))),
+        source=str(source) if source is not None else None,
+        ordinal=int(ordinal) if isinstance(ordinal, int | float) else 0,
+    )

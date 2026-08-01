@@ -1,0 +1,32 @@
+meta {
+  name: search with filters
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "query": "how is networking configured",
+    "top_k": 5,
+    "filters": {
+      "type": "architecture",
+      "tags": ["ansible"]
+    }
+  }
+}
+
+docs {
+  `type` is pushed into Chroma's where clause; `tags` resolves to a document ID
+  set through PostgreSQL first, because Chroma metadata values must be scalars
+  (AD-005). Both apply together.
+}
+
+assert {
+  res.status: eq 200
+}

@@ -1,0 +1,30 @@
+meta {
+  name: search
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "query": "bare metal kubernetes with cilium and longhorn",
+    "top_k": 5,
+    "provider": "openai"
+  }
+}
+
+docs {
+  Run `02-documents/ingest document` first. Search against a collection nothing
+  has been ingested into answers 409, not an empty result set (AD-006).
+}
+
+assert {
+  res.status: eq 200
+  res.body.results: isArray
+  res.responseTime: lt 1500
+}
