@@ -118,6 +118,28 @@ schema-check:
 bru env="local":
     cd apps/kb-api/bruno && bru run --env {{env}} -r
 
+# --- operator CLI ---------------------------------------------------------
+#
+# `kb` is a client of the deployed service (AD-025), so the useful form is the
+# installed one — these recipes are for working *on* it, not for using it.
+
+# Run the CLI from the workspace, without installing it
+kb *args:
+    uv run kb {{args}}
+
+# `uv tool install` resolves `platform-core` from the workspace by path, so the
+# installed tool references this checkout: moving or deleting the repo breaks
+# it, and a change to `libs/platform-core` needs this rerun. That is the trade
+# for not publishing two packages to an index nobody else reads.
+#
+# Install `kb` onto this machine as a standalone tool
+kb-install:
+    uv tool install ./tools/kb-cli --force
+    @echo 'installed — run "kb config init", then "kb" for the browser'
+
+kb-uninstall:
+    uv tool uninstall kb-cli
+
 # --- containers -----------------------------------------------------------
 #
 # Built with Podman here, with Docker on the VPS, from one Containerfile
