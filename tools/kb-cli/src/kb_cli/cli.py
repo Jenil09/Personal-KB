@@ -15,6 +15,7 @@ the service having exactly one exception handler.
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
@@ -23,11 +24,20 @@ import typer
 
 from kb_cli import render
 from kb_cli.client import KbClient, open_client
-from kb_cli.config import KbCliSettings, config_path, load_config_file, load_settings, redact
+from kb_cli.config import (
+    KbCliSettings,
+    config_path,
+    load_config_file,
+    load_settings,
+    redact,
+    resolve_suggest_base_url,
+)
 from kb_cli.config import save_config_file as _save_config_file
 from kb_cli.editor import edit_text
 from kb_cli.ingest import DEFAULT_EXCLUDES, DEFAULT_GLOBS, discover, read_documents
 from kb_cli.models import DocumentSummary
+from kb_cli.suggest import MetadataSuggestion, collect_tag_vocabulary, suggest_metadata
+from kb_cli.taxonomy import DOCUMENT_TYPES, normalise_tags, normalise_type
 from platform_core import ConfigurationError, NotFoundError, PlatformError, ValidationError
 
 __all__ = ["app"]
@@ -207,6 +217,10 @@ def ingest(
     ] = None,
     tag: Annotated[list[str] | None, typer.Option("--tag", help="Repeatable.")] = None,
     provider: Annotated[str | None, typer.Option("--provider", help="AD-006 collection.")] = None,
+    suggest: Annotated[
+        bool,
+        typer.Option("--suggest", help="Propose title, type, and tags with an LLM, then confirm."),
+    ] = False,
 ) -> None:
     """Ingest a single file."""
     documents = read_documents([path], path.parent, document_type=document_type, tags=tag or ())
@@ -217,12 +231,24 @@ def ingest(
     local = documents.documents[0]
 
     async def work(client: KbClient) -> None:
+        resolved_title, resolved_type, resolved_tags = local.title, local.type, local.tags
+        if suggest:
+            resolved_title, resolved_type, resolved_tags = await _review(
+                client,
+                local.content,
+                fallback_title=local.title,
+                title=title,
+                document_type=document_type,
+                tags=tag or (),
+            )
+        elif title:
+            resolved_title = title
         result = await client.ingest(
-            title=title or local.title,
+            title=resolved_title,
             content=local.content,
-            document_type=local.type,
+            document_type=resolved_type,
             source=source or local.source,
-            tags=local.tags,
+            tags=resolved_tags,
             provider=provider,
         )
         render.console.print(render.ingest_result_line(source or local.source, result))
@@ -322,6 +348,10 @@ def new_document(
     title: Annotated[str | None, typer.Option("--title")] = None,
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     provider: Annotated[str | None, typer.Option("--provider")] = None,
+    suggest: Annotated[
+        bool,
+        typer.Option("--suggest", help="Propose title, type, and tags with an LLM, then confirm."),
+    ] = False,
 ) -> None:
     """Compose a document in $EDITOR and ingest it."""
     content = edit_text("# \n\n", editor=load_settings().editor)
@@ -329,25 +359,168 @@ def new_document(
         render.console.print("Nothing ingested.", style="dim")
         raise typer.Exit(code=1)
     resolved_title = title or _title_from(content)
-    if not resolved_title:
+    if not resolved_title and not suggest:
+        # With `--suggest` the title is one of the things being proposed, so an
+        # untitled buffer is the normal starting point rather than an error.
         raise ValidationError("The document needs a title: give --title or start it with '# '.")
 
     async def work(client: KbClient) -> None:
+        nonlocal resolved_title
+        resolved_type, resolved_tags = document_type, tuple(tag or ())
+        if suggest:
+            resolved_title, resolved_type, resolved_tags = await _review(
+                client,
+                content,
+                fallback_title=resolved_title or "",
+                title=title,
+                # `new` defaults `--type` to "note" rather than leaving it unset,
+                # so an explicit choice cannot be told from the default here.
+                # Suggesting over it is the useful reading of `--suggest`.
+                document_type=None,
+                tags=tag or (),
+            )
+        if not resolved_title:
+            raise ValidationError("The document needs a title.")
         result = await client.ingest(
             title=resolved_title,
             content=content,
-            document_type=document_type,
+            document_type=resolved_type,
             # No `source`: this document did not come from a file, and inventing
             # one would make the next ingest of a real file with that name
             # supersede it (AD-020).
             source=None,
-            tags=tag or (),
+            tags=resolved_tags,
             provider=provider,
         )
         render.console.print(render.ingest_result_line(resolved_title, result))
         render.console.print(f"  {result.document_id}", style="dim")
 
     _with_client(work)
+
+
+# ---------------------------------------------------------------------------
+# metadata suggestion (AD-026)
+# ---------------------------------------------------------------------------
+
+
+@app.command("suggest")
+def suggest_command(
+    path: Annotated[Path, typer.Argument(exists=True, readable=True, help="A file to describe.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Ask the configured model what a file should be titled, typed, and tagged.
+
+    Ingests nothing. This is the command to run when a suggestion elsewhere
+    looked wrong and the question is whether the model or the prompt is at
+    fault — it is the only place the raw answer is printed on its own.
+    """
+    scanned = read_documents([path], path.parent)
+    if not scanned.documents:
+        reason = scanned.skipped[0].reason if scanned.skipped else "unreadable"
+        raise ValidationError(f"{path} cannot be described: {reason}.")
+    local = scanned.documents[0]
+
+    async def work(client: KbClient) -> None:
+        suggestion = await _suggest(client, local.content, fallback_title=local.title)
+        if as_json:
+            render.console.print_json(
+                json.dumps(
+                    {
+                        "title": suggestion.title,
+                        "type": suggestion.type,
+                        "tags": list(suggestion.tags),
+                        "model": suggestion.model,
+                        "truncated": suggestion.truncated,
+                        "coerced_type": suggestion.coerced_type,
+                    }
+                )
+            )
+            return
+        render.console.print(render.suggestion_panel(suggestion))
+
+    _with_client(work)
+
+
+async def _suggest(client: KbClient, content: str, *, fallback_title: str) -> MetadataSuggestion:
+    """One suggestion, with the corpus's own tags in the prompt.
+
+    The vocabulary pass is best-effort: without it the model invents a synonym
+    for a tag that already exists, which is a worse suggestion but still a
+    suggestion. Failing the whole call because the service was unreachable would
+    make the feature useless in the case — composing away from the tailnet —
+    where it is most wanted.
+    """
+    settings = load_settings()
+    vocabulary: tuple[str, ...] = ()
+    with suppress(PlatformError):
+        vocabulary = await collect_tag_vocabulary(client)
+    return await suggest_metadata(
+        content,
+        settings=settings.suggest,
+        known_tags=vocabulary,
+        fallback_title=fallback_title,
+    )
+
+
+async def _review(
+    client: KbClient,
+    content: str,
+    *,
+    fallback_title: str,
+    title: str | None,
+    document_type: str | None,
+    tags: Sequence[str],
+) -> tuple[str, str, tuple[str, ...]]:
+    """Suggest, show, and ask — the `--suggest` half of `new` and `ingest`.
+
+    **Every field is prompted, with the suggestion as its default.** Enter three
+    times accepts the lot, and nothing is sent before that. Options given
+    explicitly on the command line win outright and are not prompted for: a
+    `--title` is a decision already made.
+
+    A failed suggestion is not a failed command. It prints and falls through to
+    the same prompts with the inferred values as defaults, because by the time
+    this runs the document may only exist in the editor buffer that just closed.
+    """
+    suggestion: MetadataSuggestion | None = None
+    try:
+        suggestion = await _suggest(client, content, fallback_title=fallback_title)
+    except PlatformError as exc:
+        render.print_error(exc)
+        render.console.print("Continuing without a suggestion.", style="dim")
+
+    if suggestion is not None:
+        render.console.print(render.suggestion_panel(suggestion))
+
+    resolved_title = title or typer.prompt(
+        "Title", default=suggestion.title if suggestion else fallback_title
+    )
+    if not resolved_title.strip():
+        raise ValidationError("The document needs a title.")
+
+    resolved_type = document_type or typer.prompt(
+        "Type", default=suggestion.type if suggestion else "note"
+    )
+    resolved_type = resolved_type.strip() or "note"
+    if normalise_type(resolved_type) is None:
+        # A warning, not a rejection. The corpus already holds types this list
+        # does not name — `ingest-dir` infers them from directory names — and a
+        # command that refused them would be enforcing a vocabulary the rest of
+        # the tool does not (AD-026).
+        render.console.print(
+            f"[yellow]{resolved_type!r} is outside the suggested types[/] "
+            f"[dim]({', '.join(DOCUMENT_TYPES)})[/]",
+        )
+
+    if tags:
+        resolved_tags = tuple(tags)
+    else:
+        raw = typer.prompt(
+            "Tags", default=", ".join(suggestion.tags) if suggestion else "", show_default=True
+        )
+        resolved_tags = normalise_tags(raw.split(","))
+
+    return resolved_title.strip(), resolved_type, resolved_tags
 
 
 def _title_from(content: str) -> str | None:
@@ -439,6 +612,14 @@ _SETTABLE = (
     "timeout_seconds",
     "ingest_timeout_seconds",
     "editor",
+    # Dotted keys map onto the nested `suggest` group, which is also how the
+    # environment addresses them: `suggest.base_url` here is
+    # `KB_CLI__SUGGEST__BASE_URL` in a shell (AD-026).
+    "suggest.base_url",
+    "suggest.model",
+    "suggest.api_key",
+    "suggest.timeout_seconds",
+    "suggest.max_content_chars",
 )
 
 
@@ -473,8 +654,19 @@ def config_show() -> None:
         "timeout_seconds": settings.timeout_seconds,
         "ingest_timeout_seconds": settings.ingest_timeout_seconds,
         "editor": settings.editor,
+        "suggest.base_url": settings.suggest.base_url,
+        "suggest.model": settings.suggest.model if settings.suggest.configured else None,
+        "suggest.api_key": "********" if settings.suggest.api_key else None,
+        "suggest.timeout_seconds": settings.suggest.timeout_seconds,
+        "suggest.max_content_chars": settings.suggest.max_content_chars,
     }
     render.console.print(render.config_table(effective, source="effective · env over stored"))
+    if not settings.suggest.configured:
+        render.console.print(
+            "Metadata suggestion is off. Turn it on with "
+            "`kb config set suggest.base_url lmstudio`.",
+            style="dim",
+        )
 
 
 @config_app.command("set")
@@ -484,7 +676,7 @@ def config_set(
 ) -> None:
     """Set one value and save it."""
     stored = load_config_file()
-    stored[_check_key(key)] = _coerce(key, value)
+    _put(stored, _check_key(key), _coerce(key, value))
     path = _validated_save(stored)
     render.console.print(f"{key} saved to {path}", style="green")
 
@@ -495,7 +687,7 @@ def config_unset(
 ) -> None:
     """Remove one value, falling back to the default."""
     stored = load_config_file()
-    if stored.pop(_check_key(key), None) is None:
+    if _pop(stored, _check_key(key)) is None:
         render.console.print(f"{key} was not set.", style="dim")
         return
     path = _validated_save(stored)
@@ -560,7 +752,48 @@ def _coerce(key: str, value: str) -> Any:
             return float(value)
         except ValueError as exc:
             raise ValidationError(f"{key} must be a number, not {value!r}.") from exc
+    if key.endswith("_chars"):
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValidationError(f"{key} must be a whole number, not {value!r}.") from exc
+    if key == "suggest.base_url":
+        return resolve_suggest_base_url(value)
     return value
+
+
+def _put(values: dict[str, Any], key: str, value: Any) -> None:
+    """Assign `key`, creating the nested group when it is dotted."""
+    # `Any` for the same reason as `_coerce`.
+    group, _, leaf = key.partition(".")
+    if not leaf:
+        values[key] = value
+        return
+    nested = values.get(group)
+    if not isinstance(nested, dict):
+        nested = {}
+    nested[leaf] = value
+    values[group] = nested
+
+
+def _pop(values: dict[str, Any], key: str) -> Any:
+    """Remove `key`, and the nested group with it once it is empty.
+
+    Leaving `{"suggest": {}}` behind would be harmless to load and confusing to
+    read: `kb config show` would report a suggest group on a machine where
+    suggestion is off.
+    """
+    # `Any` for the same reason as `_coerce`.
+    group, _, leaf = key.partition(".")
+    if not leaf:
+        return values.pop(key, None)
+    nested = values.get(group)
+    if not isinstance(nested, dict):
+        return None
+    removed = nested.pop(leaf, None)
+    if not nested:
+        values.pop(group, None)
+    return removed
 
 
 def _validated_save(values: dict[str, Any]) -> Path:

@@ -19,13 +19,15 @@ import pytest
 from rich.console import Console
 from textual.pilot import Pilot
 from textual.screen import Screen
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from kb_cli.config import KbCliSettings
+from kb_cli.suggest import MetadataSuggestion
 from kb_cli.tui.app import KbApp
 from kb_cli.tui.documents import DocumentsScreen
 from kb_cli.tui.modals import ConfirmScreen, DocumentMetadata, MetadataScreen
 from kb_cli.tui.viewer import ViewerScreen
+from platform_core import UpstreamError
 
 
 @pytest.fixture
@@ -349,6 +351,118 @@ async def test_the_metadata_dialog_splits_tags(app: KbApp) -> None:
 
         assert result[0] is not None
         assert result[0].tags == ("ansible", "hardening")
+
+
+async def test_the_suggest_button_is_off_when_no_suggester_was_supplied(app: KbApp) -> None:
+    """Greyed out rather than offered and failing on every press."""
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(MetadataScreen(title="Something"))
+        await pilot.pause()
+
+        assert app.screen.query_one("#meta-suggest", Button).disabled is True
+        assert "Suggestions off" in content_of(app.screen, "#metadata-status")
+
+
+async def test_a_suggestion_fills_the_fields_without_ingesting(app: KbApp, service) -> None:
+    """The whole safety property of AD-026, asserted as a request count."""
+    suggestion = MetadataSuggestion(
+        title="Redshift Architecture",
+        type="architecture",
+        tags=("kubernetes", "prometheus"),
+        model="gpt-4o-mini",
+    )
+
+    async def suggester() -> MetadataSuggestion:
+        return suggestion
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = len(service.requests)
+        app.push_screen(MetadataScreen(title="", suggester=suggester))
+        await pilot.pause()
+
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+
+        assert app.screen.query_one("#meta-title", Input).value == "Redshift Architecture"
+        assert app.screen.query_one("#meta-type", Input).value == "architecture"
+        assert app.screen.query_one("#meta-tags", Input).value == "kubernetes, prometheus"
+        # Still open, and nothing was sent. A suggestion is a filled form, not
+        # an ingested document.
+        assert isinstance(app.screen, MetadataScreen)
+        assert len(service.requests) == before
+
+
+async def test_a_suggestion_reports_what_the_model_was_shown(app: KbApp) -> None:
+    async def suggester() -> MetadataSuggestion:
+        return MetadataSuggestion(
+            title="Rebuilding The Cluster",
+            type="note",
+            tags=(),
+            model="qwen2.5-7b",
+            truncated=True,
+            coerced_type="runbook",
+        )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(MetadataScreen(suggester=suggester))
+        await pilot.pause()
+
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+
+        status = content_of(app.screen, "#metadata-status")
+        assert "qwen2.5-7b" in status
+        assert "truncated" in status
+        assert "coerced from 'runbook'" in status
+
+
+async def test_a_failed_suggestion_leaves_the_form_alone(app: KbApp) -> None:
+    """A button that did nothing, not a form that lost what was typed into it."""
+
+    async def suggester() -> MetadataSuggestion:
+        raise UpstreamError("The suggestion model answered 500.")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(MetadataScreen(title="Typed By Hand", suggester=suggester))
+        await pilot.pause()
+        app.screen.query_one("#meta-tags", Input).value = "ansible"
+
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+
+        assert app.screen.query_one("#meta-title", Input).value == "Typed By Hand"
+        assert app.screen.query_one("#meta-tags", Input).value == "ansible"
+        assert app.screen.query_one("#meta-suggest", Button).disabled is False
+        assert isinstance(app.screen, MetadataScreen)
+
+
+async def test_the_compose_screen_offers_no_suggester_when_it_is_unconfigured(
+    app: KbApp,
+) -> None:
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = cast(DocumentsScreen, app.screen)
+
+        assert screen._suggester_for("# Anything\n") is None
+
+
+async def test_the_compose_screen_builds_a_suggester_when_configured(service, api_key: str) -> None:
+    settings = KbCliSettings(
+        base_url="http://kb.test",
+        api_key=api_key,
+        suggest={"base_url": "http://localhost:1234/v1"},
+    )
+    app = KbApp(settings=settings, transport=service.transport)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = cast(DocumentsScreen, app.screen)
+
+        assert screen._suggester_for("# Anything\n") is not None
 
 
 # --- search ---------------------------------------------------------------

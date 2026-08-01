@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from platformdirs import user_config_path
-from pydantic import Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     JsonConfigSettingsSource,
@@ -38,11 +38,34 @@ from platform_core import BaseServiceSettings, ConfigurationError
 
 __all__ = [
     "CONFIG_PATH_ENV_VAR",
+    "SUGGEST_PRESETS",
     "KbCliSettings",
+    "SuggestSettings",
     "config_path",
     "load_config_file",
+    "resolve_suggest_base_url",
     "save_config_file",
 ]
+
+SUGGEST_PRESETS: dict[str, str] = {
+    "lmstudio": "http://localhost:1234/v1",
+    "ollama": "http://localhost:11434/v1",
+    "openai": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+}
+"""Shorthands for `suggest.base_url`, accepted by the CLI and the settings screen.
+
+Typing `lmstudio` rather than a port number is the difference between switching
+back to the local model being something you do and something you look up. The
+stored value is always the expanded URL, so a preset that moves later does not
+silently repoint an existing configuration.
+"""
+
+
+def resolve_suggest_base_url(value: str) -> str:
+    """A preset name expanded, or the value unchanged."""
+    return SUGGEST_PRESETS.get(value.strip().lower(), value.strip())
+
 
 APP_NAME = "kb-cli"
 
@@ -56,6 +79,12 @@ exists, so it cannot be one of the model's own fields.
 """
 
 _SECRET_FIELDS = frozenset({"api_key"})
+"""Masked by `redact` wherever they appear, at the top level or nested.
+
+Matched by leaf name rather than by path because there is more than one
+`api_key` in this file now — the service's and the suggester's — and a rule that
+had to enumerate paths would mask the one somebody remembered to add.
+"""
 
 
 def config_path() -> Path:
@@ -135,7 +164,13 @@ def redact(values: dict[str, Any]) -> dict[str, Any]:
     in `kb config show`, which is the one question that view exists to answer.
     """
     return {
-        key: ("********" if key in _SECRET_FIELDS and value else value)
+        key: (
+            redact(value)
+            if isinstance(value, dict)
+            else "********"
+            if key in _SECRET_FIELDS and value
+            else value
+        )
         for key, value in values.items()
     }
 
@@ -150,6 +185,55 @@ class _ConfigFileSource(JsonConfigSettingsSource):
 
     def __init__(self, settings_cls: type[BaseSettings]) -> None:
         super().__init__(settings_cls, json_file=config_path())
+
+
+class SuggestSettings(BaseModel):
+    """The LLM the metadata suggester calls, as `KB_CLI__SUGGEST__*` (AD-026).
+
+    One shape covers every target, because OpenAI, Gemini, and every local
+    runner worth using all speak OpenAI-compatible `/chat/completions`:
+
+        OpenAI      https://api.openai.com/v1                            key required
+        Gemini      https://generativelanguage.googleapis.com/v1beta/openai   key required
+        LM Studio   http://localhost:1234/v1                             no key
+
+    Which is why `api_key` is optional here and required nowhere — a local model
+    needs no credential, and a settings model that demanded one would make the
+    case this feature is most useful for the one case it could not serve.
+    """
+
+    model_config = {"frozen": True}
+
+    base_url: str | None = None
+    """Unset means the feature is off — there is no separate `enabled` flag.
+
+    A boolean beside a URL is a boolean that eventually disagrees with it. This
+    way "suggest is configured" and "suggest has somewhere to call" cannot drift
+    apart, and turning the feature off is `kb config unset suggest.base_url`.
+    """
+
+    model: str = "gpt-4o-mini"
+
+    api_key: SecretStr | None = None
+
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    """Longer than a search and shorter than an ingest.
+
+    A local 7B model on CPU takes tens of seconds to produce this JSON, and a
+    30 s budget tuned to a hosted API would make LM Studio look broken.
+    """
+
+    max_content_chars: int = Field(default=8000, gt=0)
+    """What of the document reaches the model, before reduction (see `suggest`)."""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url)
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str | None) -> str | None:
+        return value.rstrip("/") if value else value
 
 
 class KbCliSettings(BaseServiceSettings):
@@ -186,6 +270,9 @@ class KbCliSettings(BaseServiceSettings):
 
     editor: str | None = None
     """Overrides `$VISUAL`/`$EDITOR` for the compose-a-document action."""
+
+    suggest: SuggestSettings = SuggestSettings()
+    """Metadata suggestion (AD-026). Absent from a config file means off."""
 
     @field_validator("base_url", mode="after")
     @classmethod

@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from kb_cli import cli, render
 from kb_cli.client import KbClient
 from kb_cli.config import KbCliSettings, load_config_file
+from kb_cli.suggest import suggest_metadata
 
 
 @pytest.fixture
@@ -311,6 +312,204 @@ def test_status_json_is_machine_readable(runner: CliRunner, wired) -> None:
     assert json.loads(result.output)["total_documents"] == 0
 
 
+# --- metadata suggestion (AD-026) -----------------------------------------
+
+
+@pytest.fixture
+def suggesting(model, monkeypatch: pytest.MonkeyPatch):
+    """Point the suggester at the fake model, and nothing else.
+
+    The transport is substituted the same way `wired` substitutes the service's
+    — the command still resolves real settings and still runs the real prompt
+    building, reduction, and validation, because those are the parts a mistake
+    would hide in.
+    """
+    monkeypatch.setenv("KB_CLI__SUGGEST__BASE_URL", "http://model.test/v1")
+
+    async def through_the_fake(content: str, **kwargs):
+        kwargs.pop("client", None)
+        async with model.client() as client:
+            return await suggest_metadata(content, client=client, **kwargs)
+
+    monkeypatch.setattr(cli, "suggest_metadata", through_the_fake)
+    return model
+
+
+def test_suggest_prints_a_proposal_and_ingests_nothing(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbare metal kubernetes", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["suggest", str(document)])
+
+    assert result.exit_code == 0
+    assert "Redshift Architecture" in result.output
+    assert "architecture" in result.output
+    assert wired.documents == {}
+
+
+def test_suggest_json_is_machine_readable(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["suggest", str(document), "--json"])
+
+    payload = json.loads(result.output)
+    assert payload["title"] == "Redshift Architecture"
+    assert payload["type"] == "architecture"
+    assert payload["tags"] == ["kubernetes", "observability"]
+
+
+def test_suggest_says_which_setting_turns_it_on(runner: CliRunner, wired, tmp_path: Path) -> None:
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["suggest", str(document)])
+
+    # The error propagates to `__main__.main`, which is the one place that
+    # prints it — so the sentence is on the exception, not in the output.
+    assert result.exit_code != 0
+    assert "suggest.base_url" in str(result.exception)
+
+
+def test_suggest_sends_the_corpus_tags_to_the_model(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    """ "Prefer an existing tag" is only an instruction the model can follow if it has them."""
+    wired.add("Existing", tags=("ansible", "wazuh"))
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    runner.invoke(cli.app, ["suggest", str(document)])
+
+    assert "ansible, wazuh" in suggesting.requests[0]["messages"][0]["content"]
+
+
+def test_ingest_suggest_prompts_before_sending(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    # Three blank lines: accept the suggested title, type, and tags.
+    result = runner.invoke(cli.app, ["ingest", str(document), "--suggest"], input="\n\n\n")
+
+    assert result.exit_code == 0
+    stored = next(iter(wired.documents.values()))
+    assert stored["title"] == "Redshift Architecture"
+    assert stored["type"] == "architecture"
+    assert stored["tags"] == ["kubernetes", "observability"]
+
+
+def test_ingest_suggest_accepts_edits_at_the_prompt(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    """The suggestion is a default, not a decision."""
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    runner.invoke(
+        cli.app,
+        ["ingest", str(document), "--suggest"],
+        input="My Own Title\nsop\nansible, security\n",
+    )
+
+    stored = next(iter(wired.documents.values()))
+    assert stored["title"] == "My Own Title"
+    assert stored["type"] == "sop"
+    assert stored["tags"] == ["ansible", "security"]
+
+
+def test_ingest_suggest_does_not_prompt_for_what_was_given_explicitly(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    result = runner.invoke(
+        cli.app,
+        ["ingest", str(document), "--suggest", "--title", "Decided", "--tag", "chosen"],
+        input="\n",
+    )
+
+    assert result.exit_code == 0
+    stored = next(iter(wired.documents.values()))
+    assert stored["title"] == "Decided"
+    assert stored["tags"] == ["chosen"]
+    # Only the type was left to ask about.
+    assert stored["type"] == "architecture"
+
+
+def test_ingest_without_suggest_calls_no_model(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    """The feature is opt-in; the plain path must not have grown a dependency on it."""
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    runner.invoke(cli.app, ["ingest", str(document)])
+
+    assert suggesting.requests == []
+
+
+def test_a_failed_suggestion_still_lets_the_ingest_proceed(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    """By the time this runs the document may only exist in a closed editor buffer."""
+    suggesting.status = 500
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["ingest", str(document), "--suggest"], input="\n\n\n")
+
+    assert result.exit_code == 0
+    assert "Continuing without a suggestion" in result.output
+    assert next(iter(wired.documents.values()))["title"] == "Notes"
+
+
+def test_a_type_outside_the_list_is_warned_about_but_accepted(
+    runner: CliRunner, wired, suggesting, tmp_path: Path
+) -> None:
+    """`ingest-dir` still infers types from folder names, so this cannot be a refusal."""
+    document = tmp_path / "notes.md"
+    document.write_text("# Notes\n\nbody", encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["ingest", str(document), "--suggest"], input="\nrunbook\n\n")
+
+    assert result.exit_code == 0
+    assert "outside the suggested types" in result.output
+    assert next(iter(wired.documents.values()))["type"] == "runbook"
+
+
+def test_new_suggest_proposes_a_title_for_an_untitled_buffer(
+    runner: CliRunner, wired, suggesting, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `--suggest` an untitled buffer is an error; with it, it is the point."""
+    monkeypatch.setattr(cli, "edit_text", lambda *args, **kwargs: "some prose with no heading")
+
+    result = runner.invoke(cli.app, ["new", "--suggest"], input="\n\n\n")
+
+    assert result.exit_code == 0
+    stored = next(iter(wired.documents.values()))
+    assert stored["title"] == "Redshift Architecture"
+    assert stored["type"] == "architecture"
+    assert stored["tags"] == ["kubernetes", "observability"]
+
+
+def test_new_without_suggest_still_refuses_an_untitled_buffer(
+    runner: CliRunner, wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "edit_text", lambda *args, **kwargs: "no heading here")
+
+    result = runner.invoke(cli.app, ["new"])
+
+    assert result.exit_code != 0
+    assert wired.documents == {}
+
+
 # --- config ---------------------------------------------------------------
 
 
@@ -371,6 +570,55 @@ def test_config_unset_removes_a_value(runner: CliRunner) -> None:
     result = runner.invoke(cli.app, ["config", "show"])
 
     assert "gemini" not in result.output
+
+
+def test_config_set_expands_a_suggest_preset(runner: CliRunner) -> None:
+    """Switching back to the local model must not require looking up a port."""
+    runner.invoke(cli.app, ["config", "set", "suggest.base_url", "lmstudio"])
+
+    assert load_config_file()["suggest"] == {"base_url": "http://localhost:1234/v1"}
+
+
+def test_config_set_writes_into_the_nested_group(runner: CliRunner) -> None:
+    runner.invoke(cli.app, ["config", "set", "suggest.base_url", "openai"])
+    runner.invoke(cli.app, ["config", "set", "suggest.model", "gpt-4o-mini"])
+
+    assert load_config_file()["suggest"] == {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    }
+
+
+def test_config_unset_removes_the_group_once_it_is_empty(runner: CliRunner) -> None:
+    """A leftover `{"suggest": {}}` would read as a feature that is on."""
+    runner.invoke(cli.app, ["config", "set", "suggest.base_url", "lmstudio"])
+
+    runner.invoke(cli.app, ["config", "unset", "suggest.base_url"])
+
+    assert "suggest" not in load_config_file()
+
+
+def test_config_set_rejects_a_non_numeric_content_budget(runner: CliRunner) -> None:
+    result = runner.invoke(cli.app, ["config", "set", "suggest.max_content_chars", "lots"])
+
+    assert result.exit_code != 0
+    assert "whole number" in str(result.exception)
+
+
+def test_config_show_never_prints_the_model_key(runner: CliRunner) -> None:
+    runner.invoke(cli.app, ["config", "set", "suggest.base_url", "openai"])
+    runner.invoke(cli.app, ["config", "set", "suggest.api_key", "sk-super-secret"])
+
+    result = runner.invoke(cli.app, ["config", "show"])
+
+    assert "sk-super-secret" not in result.output
+    assert "********" in result.output
+
+
+def test_config_show_says_how_to_turn_suggestion_on(runner: CliRunner) -> None:
+    result = runner.invoke(cli.app, ["config", "show"])
+
+    assert "suggest.base_url" in result.output
 
 
 def test_config_path_prints_a_path(runner: CliRunner) -> None:
