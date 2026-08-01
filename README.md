@@ -19,7 +19,7 @@ CLI. PostgreSQL is the system of record and holds a guaranteed audit trail.
 | --- | --- |
 | [uv](https://docs.astral.sh/uv/) | Manages Python and all dependencies |
 | [just](https://just.systems/) | Task runner |
-| Podman + `podman-compose` | Rootless. Docker is not used — see gotchas below |
+| Podman + `podman-compose` | Rootless, for development and CI. The VPS runs Docker (AD-022) — see gotchas below |
 
 Python 3.13 is installed automatically by uv from `.python-version`.
 
@@ -51,8 +51,19 @@ just check                 # lockfile, lint, format, types, unit tests
 | `just migrate` | `alembic upgrade head` |
 | `just run` | Run kb-api locally on :8000 |
 | `just bru [env]` | Run the Bruno collection (`local` or `production`) |
+| `just image [tag]` | Build the runtime image with Podman |
+| `just prod-config` | Validate `compose.prod.yml` |
+| `just verify-exposure` | Assert `compose.prod.yml` publishes no host port |
+| `just backup` / `just restore <dir>` | Run on the VPS; `restore` rehearses by default |
 
 Run `just` with no arguments to list everything.
+
+## Deployment
+
+`docs/DEPLOYMENT.md`. The short version: the service is **not published to the
+internet** — no public hostname, no certificate, and no container in the
+production stack binds a host port. n8n reaches it over a shared Docker network
+and the operator reaches it over Tailscale (AD-023).
 
 ## Layout
 

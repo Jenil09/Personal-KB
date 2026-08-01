@@ -5,6 +5,11 @@ CLAUDE.md
 .env
 .env.*
 !.env.example
+!.env.prod.example
+
+# Backup archives carry the audit schema, and the audit schema carries full
+# search query text (AD-013). They are never a repo artefact.
+backups/
 
 .md
 !docs/*.md

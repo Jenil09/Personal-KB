@@ -1,0 +1,37 @@
+# Named `.dockerignore` rather than `.containerignore` because Podman reads both
+# and Docker reads only this one (AD-022: one file, two runtimes).
+#
+# The Containerfile copies explicit paths rather than the tree, so this is a
+# second line of defence rather than the primary one. It matters most for `.env`
+# and `data/`: a build context that carries a secret has already leaked it to the
+# daemon, whatever the Containerfile then chooses to COPY.
+
+.env
+.env.*
+!.env.example
+data/
+*.spill.jsonl
+
+.git/
+.github/
+.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage*
+htmlcov/
+coverage.xml
+
+**/tests/
+apps/kb-api/bruno/
+ai-kb/
+docs/
+graphify-out/
+compose*.yml
+justfile
+*.md

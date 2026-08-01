@@ -43,6 +43,42 @@ jobs:
       - name: Unit tests
         run: uv run pytest -m "not integration" --cov --cov-report=term-missing
 
+  # The deployable artefact, built on every PR. A Containerfile that only ever
+  # gets built at deploy time is one whose breakage is discovered at deploy time
+  # — and this one has a failure mode the test suite cannot see, because the dev
+  # dependency group installs both `ai-embeddings` driver extras while the image
+  # installs only what `kb-api` declares.
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: docker build -f apps/kb-api/Containerfile -t kb-api:ci .
+
+      # Imports the composition root under the runtime's own dependency set, so
+      # a driver missing from the image fails here rather than at startup on the
+      # VPS. It reads no environment: `build_app` is a factory precisely so the
+      # module is importable without a full configuration (Phase 6).
+      - name: The image can import the app it serves
+        run: docker run --rm kb-api:ci python -c "import kb_api.main; print(kb_api.main.build_app)"
+
+      - name: Alembic resolves its migrations inside the image
+        run: docker run --rm --workdir /app/apps/kb-api kb-api:ci alembic heads
+
+      # AD-023: the absence of a `ports:` key is the control, so it is checked
+      # rather than reviewed. `apps/kb-api/tests/test_compose_prod.py` asserts
+      # the same thing structurally in the unit suite; this is the greppable
+      # half, and it costs nothing to have both.
+      - name: compose.prod.yml publishes no host port
+        run: |
+          if grep -nE '^\s*ports:' compose.prod.yml; then
+            echo "::error file=compose.prod.yml::AD-023 forbids a ports: key in this file"
+            exit 1
+          fi
+          echo "no ports: key in compose.prod.yml"
+
   integration:
     name: integration
     runs-on: ubuntu-latest

@@ -17,6 +17,12 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "testcontainers>=4.13.0",
+    # `test_compose_prod.py` reads compose.prod.yml structurally, which is how
+    # AD-023's no-host-port rule is checked in CI. PyYAML arrives transitively
+    # with `uvicorn[standard]`, but a test dependency that holds only as long as
+    # an unrelated extra keeps shipping it is one that breaks confusingly.
+    "pyyaml>=6.0",
+    "types-PyYAML>=6.0",
     # Both provider extras, so the contract suite can run against both drivers.
     # Extras on a workspace member are not installed by `uv sync` otherwise.
     "ai-embeddings[gemini,openai]",

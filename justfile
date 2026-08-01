@@ -110,6 +110,59 @@ schema:
 schema-check:
     uv run python -m kb_api.scripts.export_openapi --check
 
-# Run the Bruno collection against a live instance
+# Run the Bruno collection against a live instance.
+#
+# `production` points at the tailnet address (AD-023), so it only resolves from
+# a tailnet-joined machine — which is where the post-deploy smoke test was
+# always going to run from.
 bru env="local":
     cd apps/kb-api/bruno && bru run --env {{env}} -r
+
+# --- containers -----------------------------------------------------------
+#
+# Built with Podman here, with Docker on the VPS, from one Containerfile
+# (AD-022). The recipes below are the local half; `docs/DEPLOYMENT.md` is the
+# host half, and every command there passes `--env-file .env.prod` explicitly.
+
+# Build the runtime image from the workspace root
+image tag="kb-api:latest":
+    podman build -f apps/kb-api/Containerfile -t {{tag}} .
+
+# Validate compose.prod.yml — YAML, interpolation, and the merged result.
+#
+# Reads `.env.prod` if it exists and `.env.prod.example` otherwise, so this is
+# runnable on a machine that holds no production secrets. The example leaves the
+# secrets blank on purpose and the file declares them `${…:?}`, so the fallback
+# supplies placeholders — the check being made here is that the file parses, not
+# that this machine could deploy it.
+#
+# podman-compose, because that is what is installed here (AD-015); the VPS runs
+# `docker compose config` against the same file, which is the authority. AD-022
+# permits Docker-only features in this file, so a podman-compose complaint is
+# worth reading before it is worth acting on.
+prod-config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    env_file=.env.prod
+    if [ ! -f "$env_file" ]; then
+        env_file=.env.prod.example
+        export KB_POSTGRES_PASSWORD=placeholder KB_TAILSCALE_AUTHKEY=placeholder
+    fi
+    podman-compose --env-file "$env_file" -f compose.prod.yml config >/dev/null
+    echo "compose.prod.yml parses and interpolates (from $env_file)"
+
+# AD-023's rule, checked against the file. `deploy/verify-exposure.sh` checks it
+# against a running stack; this is the half that needs no VPS.
+verify-exposure:
+    uv run pytest apps/kb-api/tests/test_compose_prod.py -q
+
+# --- operations (run these on the VPS) ------------------------------------
+
+backup:
+    ./deploy/backup.sh
+
+# Defaults to a rehearsal against a throwaway container — the live stack is
+# untouched unless `--in-place` is passed. Phase 9's exit criterion is that this
+# has actually been run once: a backup is not done until a restore has been.
+restore backup_dir:
+    ./deploy/restore.sh {{backup_dir}}
