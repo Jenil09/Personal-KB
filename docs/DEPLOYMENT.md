@@ -36,6 +36,22 @@ are trying to do has a different answer. See "Reaching the API" below.
 - A Tailscale auth key — reusable and **not** ephemeral. An ephemeral key means
   the node disappears when the container restarts, and the Bruno `production`
   environment stops resolving.
+- **MagicDNS and HTTPS Certificates enabled for the tailnet**, at
+  [the DNS page of the admin console](https://login.tailscale.com/admin/dns).
+  `deploy/tailscale-serve.json` keys its handler on `${TS_CERT_DOMAIN}:443`, and
+  that variable is only populated once the tailnet can issue certificates.
+  Without it the node joins and is routable, but `containerboot` refuses to apply
+  the serve config, so port 443 falls through to netstack's localhost forwarder.
+  The symptom is a connection failure from the operator with a healthy stack
+  behind it, and these two lines on the proxy:
+
+  ```
+  boot: serve proxy: ... it is not able to issue TLS certs, so this will likely not work.
+  netstack: could not connect to local backend server at 127.0.0.1:443: connection refused
+  ```
+
+  Confirm with `tailscale serve status` inside the container: it should print the
+  node's HTTPS URL and a proxy line, not `No serve config`.
 - An OpenAI API key. The corpus is bound to `text-embedding-3-small` (AD-006);
   changing the model is a full re-embed into a new collection, not a config edit.
 
@@ -67,7 +83,11 @@ Startup order is enforced by the file, not by waiting:
 3. `kb-api` starts only on `service_completed_successfully` — a failed migration
    means the API never starts, rather than a crash loop that reruns it every few
    seconds.
-4. `tailscale` joins the tailnet and proxies it to `http://kb-api:8000`.
+4. `tailscale` joins the tailnet and proxies it to `http://kb-api-upstream:8000`
+   — the alias `kb-api` carries on `kb-tailnet`, not its service name. The proxy
+   container's own hostname is `kb-api`, since that is the tailnet node name and
+   therefore the operator's URL, so the bare service name is ambiguous on that
+   network and resolves to the proxy itself.
 
 ### Verify the deploy
 

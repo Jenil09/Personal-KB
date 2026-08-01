@@ -22,8 +22,10 @@ stack. A file that says the right thing and a daemon that does the right thing
 are different claims.
 """
 
+import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -101,6 +103,31 @@ def test_kb_api_sits_on_every_network(compose: dict[str, Any]) -> None:
         "kb-tailnet",
         "egress",
     }
+
+
+def test_the_proxy_target_is_unambiguous_on_the_tailnet(compose: dict[str, Any]) -> None:
+    """The tailscale container's `hostname` is the tailnet node name — and Docker
+    registers a container's hostname as a resolvable name on its networks. With
+    the default `kb-api`, the bare name is ambiguous on kb-tailnet and the
+    resolver may answer with the proxy's own address, at which point `serve`
+    connects to itself and every operator request is a 502 with the whole stack
+    healthy. The alias is the disambiguator; serve.json must use it."""
+    serve = json.loads((_repo_root() / "deploy" / "tailscale-serve.json").read_text())
+    handler = serve["Web"]["${TS_CERT_DOMAIN}:443"]["Handlers"]["/"]
+    target = urlsplit(handler["Proxy"]).hostname
+
+    kb_api = compose["services"]["kb-api"]["networks"]
+    aliases = kb_api["kb-tailnet"]["aliases"]
+
+    assert target in aliases, (
+        f"serve.json proxies to {target!r}, which is not an alias of kb-api on "
+        "kb-tailnet"
+    )
+    tailnet_hostname = compose["services"]["tailscale"]["hostname"]
+    assert target not in tailnet_hostname, (
+        f"the proxy target {target!r} collides with the tailscale container's "
+        f"hostname {tailnet_hostname!r}; the proxy will resolve to itself"
+    )
 
 
 def test_the_shared_network_is_external(compose: dict[str, Any]) -> None:

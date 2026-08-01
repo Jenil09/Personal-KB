@@ -5,7 +5,7 @@
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
       "Handlers": {
-        "/": { "Proxy": "http://kb-api:8000" }
+        "/": { "Proxy": "http://kb-api-upstream:8000" }
       }
     }
   }

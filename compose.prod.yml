@@ -20,7 +20,7 @@
 #
 #   kb-internal  internal: true   Postgres, Chroma, kb-api — no route off host
 #   kb-shared    external: true   n8n → http://kb-api:8000, plain HTTP
-#   kb-tailnet                    tailscale → kb-api, operator entry point
+#   kb-tailnet                    tailscale → kb-api-upstream, operator entry point
 #   egress                        kb-api → the embedding provider, outbound only
 #
 # `kb-shared` is external because n8n owns it; this stack joins, it does not
@@ -147,7 +147,23 @@ services:
       # replacement during a Postgres outage loses exactly the records the spill
       # exists to keep.
       - kb-audit-spill:/app/data
-    networks: [kb-internal, kb-shared, kb-tailnet, egress]
+    # The `kb-tailnet` alias is not decoration. The tailscale container sets
+    # `hostname: kb-api` so the tailnet node — and therefore the operator's URL —
+    # is `kb-api.<tailnet>.ts.net`, and Docker registers a container's hostname
+    # as a resolvable name on its networks. That makes the bare name `kb-api`
+    # ambiguous on `kb-tailnet`: it maps to this container and to the proxy
+    # itself. When the resolver answers with the proxy's own address, `serve`
+    # connects to port 8000 on itself, nothing listens there, and every operator
+    # request is a 502 while every healthcheck stays green.
+    #
+    # `serve.json` therefore targets this alias, which only ever means this
+    # container. Do not point it back at `kb-api`.
+    networks:
+      kb-internal:
+      kb-shared:
+      egress:
+      kb-tailnet:
+        aliases: [kb-api-upstream]
     expose: ["8000"]
     depends_on:
       postgres:
@@ -187,15 +203,26 @@ services:
   #
   # State in a named volume, or every restart burns a fresh node and a fresh
   # auth key. Use an OAuth client or a reusable, ephemeral-free auth key.
+  #
+  # The tailnet requires HTTPS certificates enabled for the whole tailnet
+  # (admin console → DNS → HTTPS Certificates). Without it the node has no cert
+  # domain, `${TS_CERT_DOMAIN}` in serve.json expands to nothing, containerboot
+  # refuses to apply the config, and port 443 falls through to netstack's
+  # localhost forwarder — "connection refused to 127.0.0.1:443" in the logs,
+  # "No serve config" from `tailscale serve status`.
   tailscale:
     image: tailscale/tailscale:v1.90.6
     restart: unless-stopped
+    # This is the tailnet node name, so it is the operator's URL. It also
+    # becomes a Docker DNS name on kb-tailnet, which is why kb-api is reached
+    # through the `kb-api-upstream` alias rather than its service name.
     hostname: ${KB_TAILSCALE_HOSTNAME:-kb-api}
     environment:
       TS_AUTHKEY: ${KB_TAILSCALE_AUTHKEY:?set in .env.prod}
       TS_USERSPACE: "true"
       TS_STATE_DIR: /var/lib/tailscale
-      # Proxies the tailnet to kb-api by container name, over kb-tailnet. The
+      # Proxies the tailnet to `kb-api-upstream` over kb-tailnet — the alias, not
+      # the service name, because `hostname` above claims `kb-api` too. The
       # hop is why the tier-1 `client_ip` for operator traffic is this
       # container's Docker address; `Tailscale-User-Login`, which `serve`
       # forwards, carries the real identity and is recorded on the row.
