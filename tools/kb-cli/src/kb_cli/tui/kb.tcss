@@ -150,8 +150,13 @@ MetadataScreen {
     padding-bottom: 1;
 }
 
+#metadata-status {
+    height: auto;
+    padding-top: 1;
+}
+
 #metadata-buttons {
-    grid-size: 2 1;
+    grid-size: 3 1;
     grid-gutter: 1 2;
     height: auto;
     padding-top: 1;

@@ -26,8 +26,10 @@ from kb_cli.client import KbClient
 from kb_cli.editor import edit_text
 from kb_cli.models import DocumentDetail, DocumentSummary
 from kb_cli.render import humanise_bytes, short_id
-from kb_cli.tui.modals import ConfirmScreen, DocumentMetadata, MetadataScreen
+from kb_cli.suggest import MetadataSuggestion, collect_tag_vocabulary, suggest_metadata
+from kb_cli.tui.modals import ConfirmScreen, DocumentMetadata, MetadataScreen, Suggester
 from kb_cli.tui.viewer import ViewerScreen
+from platform_core import PlatformError
 
 if TYPE_CHECKING:
     from kb_cli.tui.app import KbApp
@@ -281,7 +283,45 @@ class DocumentsScreen(Screen[None]):
             if metadata is not None:
                 self._ingest(content, metadata)
 
-        app.push_screen(MetadataScreen(title=_heading_of(content)), callback=on_described)
+        app.push_screen(
+            MetadataScreen(title=_heading_of(content), suggester=self._suggester_for(content)),
+            callback=on_described,
+        )
+
+    def _suggester_for(self, content: str) -> Suggester | None:
+        """Bind everything the metadata dialog would otherwise have to know.
+
+        `None` when suggestion is unconfigured, which is what greys the button
+        out rather than offering one that fails on every press.
+        """
+        app = self._kb_app()
+        settings = app.settings
+        if settings is None or not settings.suggest.configured:
+            return None
+        suggest_settings = settings.suggest
+        client = app.client
+        heading = _heading_of(content)
+
+        async def suggest() -> MetadataSuggestion:
+            vocabulary: tuple[str, ...] = ()
+            if client is not None:
+                try:
+                    vocabulary = await collect_tag_vocabulary(client)
+                except PlatformError:
+                    # Best effort. Losing the vocabulary costs the prompt its
+                    # "prefer an existing tag" hint; failing the suggestion over
+                    # it would cost the whole feature whenever the service is
+                    # unreachable, which is exactly when composing offline and
+                    # ingesting later is most useful.
+                    vocabulary = ()
+            return await suggest_metadata(
+                content,
+                settings=suggest_settings,
+                known_tags=vocabulary,
+                fallback_title=heading,
+            )
+
+        return suggest
 
     @work(group="ingest")
     async def _ingest(self, content: str, metadata: DocumentMetadata) -> None:

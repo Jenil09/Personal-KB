@@ -18,6 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from kb_cli.models import DocumentDetail, DocumentPage, IngestResult, SearchResponse, Stats
+from kb_cli.suggest import MetadataSuggestion
 
 __all__ = [
     "console",
@@ -28,6 +29,7 @@ __all__ = [
     "search_results",
     "short_id",
     "stats_view",
+    "suggestion_panel",
 ]
 
 console = Console()
@@ -186,6 +188,29 @@ def ingest_result_line(source: str, result: IngestResult) -> Text:
         # document look identical to a first ingest.
         parts.append(f"  replaced {len(result.superseded)}", style="yellow")
     return parts
+
+
+def suggestion_panel(suggestion: MetadataSuggestion) -> RenderableType:
+    """A proposal, drawn so it does not look like a result.
+
+    Yellow rather than the cyan every other panel here uses, and the caveats are
+    on the panel rather than in a log line: what the model was shown, and
+    whether its answer had to be corrected, are the two things that tell you how
+    much of this to accept.
+    """
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim", no_wrap=True)
+    grid.add_column(overflow="fold")
+    grid.add_row("title", suggestion.title)
+    grid.add_row("type", suggestion.type)
+    grid.add_row("tags", ", ".join(suggestion.tags) or "—")
+    body: list[RenderableType] = [grid, Text(""), Text("  ·  ".join(suggestion.notes), style="dim")]
+    return Panel(
+        Group(*body),
+        title="Suggested — nothing has been ingested",
+        title_align="left",
+        border_style="yellow",
+    )
 
 
 def stats_view(stats: Stats) -> RenderableType:

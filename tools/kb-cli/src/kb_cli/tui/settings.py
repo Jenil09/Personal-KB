@@ -27,7 +27,12 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
-from kb_cli.config import config_path, load_config_file, save_config_file
+from kb_cli.config import (
+    config_path,
+    load_config_file,
+    resolve_suggest_base_url,
+    save_config_file,
+)
 from platform_core import ConfigurationError, PlatformError
 
 if TYPE_CHECKING:
@@ -37,6 +42,7 @@ __all__ = ["SettingsScreen"]
 
 _SECRET_PLACEHOLDER_SET = "unchanged — type to replace"
 _SECRET_PLACEHOLDER_EMPTY = "required"
+_SECRET_PLACEHOLDER_OPTIONAL = "none stored"
 
 
 class SettingsScreen(Screen[None]):
@@ -66,6 +72,17 @@ class SettingsScreen(Screen[None]):
             yield Label("Command  [dim](blank uses $VISUAL, then $EDITOR)[/]")
             yield Input(placeholder="nvim", id="set-editor")
 
+            yield Label("Metadata suggestion", classes="settings-section")
+            yield Label(
+                "Model endpoint  [dim](blank turns suggestion off; "
+                "lmstudio · ollama · openai · gemini are shorthands)[/]"
+            )
+            yield Input(placeholder="http://localhost:1234/v1", id="set-suggest-url")
+            yield Label("Model")
+            yield Input(placeholder="gpt-4o-mini", id="set-suggest-model")
+            yield Label("Model API key  [dim](not needed for a local model)[/]")
+            yield Input(password=True, id="set-suggest-key")
+
             with Horizontal(id="settings-buttons"):
                 yield Button("Save", variant="success", id="save")
                 yield Button("Test connection", id="test")
@@ -90,10 +107,19 @@ class SettingsScreen(Screen[None]):
             stored.get("ingest_timeout_seconds")
         )
         self.query_one("#set-editor", Input).value = str(stored.get("editor") or "")
+        suggest = stored.get("suggest")
+        suggest = suggest if isinstance(suggest, dict) else {}
+        self.query_one("#set-suggest-url", Input).value = str(suggest.get("base_url") or "")
+        self.query_one("#set-suggest-model", Input).value = str(suggest.get("model") or "")
         key_field = self.query_one("#set-api-key", Input)
         key_field.value = ""
         key_field.placeholder = (
             _SECRET_PLACEHOLDER_SET if stored.get("api_key") else _SECRET_PLACEHOLDER_EMPTY
+        )
+        suggest_key = self.query_one("#set-suggest-key", Input)
+        suggest_key.value = ""
+        suggest_key.placeholder = (
+            _SECRET_PLACEHOLDER_SET if suggest.get("api_key") else _SECRET_PLACEHOLDER_OPTIONAL
         )
         self.query_one("#settings-path", Static).update(f"[dim]Saved to {config_path()}[/]")
 
@@ -127,6 +153,7 @@ class SettingsScreen(Screen[None]):
         _put_float(
             values, "ingest_timeout_seconds", self.query_one("#set-ingest-timeout", Input).value
         )
+        self._collect_suggest(values)
         key = self.query_one("#set-api-key", Input).value.strip()
         if key:
             values["api_key"] = key
@@ -137,6 +164,29 @@ class SettingsScreen(Screen[None]):
             # precedence rules.
             raise ValueError("An API key is required — set one here or in KB_CLI__API_KEY.")
         return values
+
+    def _collect_suggest(self, values: dict[str, Any]) -> None:
+        """The `suggest` group, cleared entirely when the endpoint is blanked.
+
+        Blanking the URL is how suggestion is turned off (there is no separate
+        flag), so leaving a stored model and key behind would keep a group in
+        the file describing a feature that is off. The key is preserved across
+        an ordinary save for the same reason the service key is — the field
+        never redisplays it, and an empty field means "unchanged".
+        """
+        # `Any` for the same reason as `_collect`.
+        url = resolve_suggest_base_url(self.query_one("#set-suggest-url", Input).value)
+        stored = values.get("suggest")
+        group: dict[str, Any] = dict(stored) if isinstance(stored, dict) else {}
+        if not url:
+            values.pop("suggest", None)
+            return
+        group["base_url"] = url
+        _put(group, "model", self.query_one("#set-suggest-model", Input).value)
+        key = self.query_one("#set-suggest-key", Input).value.strip()
+        if key:
+            group["api_key"] = key
+        values["suggest"] = group
 
     def _reconnect(self) -> None:
         app = cast("KbApp", self.app)

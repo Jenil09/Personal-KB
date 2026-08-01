@@ -20,6 +20,7 @@ from kb_cli.config import (
     load_config_file,
     load_settings,
     redact,
+    resolve_suggest_base_url,
     save_config_file,
 )
 from platform_core import ConfigurationError
@@ -149,3 +150,75 @@ def test_redact_masks_the_key_without_hiding_that_one_is_set() -> None:
 
 def test_redact_leaves_an_absent_key_visibly_absent() -> None:
     assert redact({"api_key": ""})["api_key"] == ""
+
+
+# --- metadata suggestion (AD-026) -----------------------------------------
+
+
+def test_suggestion_is_off_until_an_endpoint_is_configured() -> None:
+    """There is no `enabled` flag — the URL is the flag."""
+    settings = KbCliSettings(api_key="k")
+
+    assert settings.suggest.base_url is None
+    assert settings.suggest.configured is False
+
+
+def test_suggestion_reads_the_nested_group_from_the_stored_file() -> None:
+    save_config_file(
+        {
+            "api_key": "k",
+            "suggest": {"base_url": "http://localhost:1234/v1", "model": "qwen2.5-7b"},
+        }
+    )
+
+    settings = load_settings()
+
+    assert settings.suggest.configured is True
+    assert settings.suggest.base_url == "http://localhost:1234/v1"
+    assert settings.suggest.model == "qwen2.5-7b"
+
+
+def test_the_environment_overrides_a_stored_suggest_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Double underscore addresses the nested group: `KB_CLI__SUGGEST__BASE_URL`."""
+    save_config_file({"api_key": "k", "suggest": {"base_url": "http://localhost:1234/v1"}})
+    monkeypatch.setenv("KB_CLI__SUGGEST__BASE_URL", "https://api.openai.com/v1")
+
+    assert load_settings().suggest.base_url == "https://api.openai.com/v1"
+
+
+def test_the_suggest_endpoint_loses_its_trailing_slash() -> None:
+    settings = KbCliSettings(api_key="k", suggest={"base_url": "http://localhost:1234/v1/"})
+
+    assert settings.suggest.base_url == "http://localhost:1234/v1"
+
+
+def test_the_suggest_model_needs_no_key() -> None:
+    """A local model has no credential, and requiring one would exclude it."""
+    settings = KbCliSettings(api_key="k", suggest={"base_url": "http://localhost:1234/v1"})
+
+    assert settings.suggest.api_key is None
+
+
+def test_a_preset_expands_to_its_endpoint() -> None:
+    assert resolve_suggest_base_url("lmstudio") == "http://localhost:1234/v1"
+    assert resolve_suggest_base_url("  OpenAI ") == "https://api.openai.com/v1"
+
+
+def test_an_unrecognised_endpoint_is_left_alone() -> None:
+    assert resolve_suggest_base_url("http://gpu-box:8080/v1") == "http://gpu-box:8080/v1"
+
+
+def test_redact_masks_the_nested_model_key() -> None:
+    """There are two `api_key`s now, and printing either one is the same mistake."""
+    masked = redact(
+        {
+            "api_key": "service-secret",
+            "suggest": {"base_url": "https://api.openai.com/v1", "api_key": "sk-secret"},
+        }
+    )
+
+    assert masked["api_key"] == "********"
+    assert masked["suggest"]["api_key"] == "********"
+    assert masked["suggest"]["base_url"] == "https://api.openai.com/v1"
