@@ -31,8 +31,13 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
 
+      # Through `just`, not a copy of the command. The copy that used to live
+      # here was `mypy apps libs`, which fails outright on `Duplicate module
+      # named "conftest"` — two members having a `tests/conftest.py` is normal,
+      # and the recipe checks each suite in its own pass for exactly that
+      # reason. `uvx` rather than a setup action, since uv is already here.
       - name: Types
-        run: uv run mypy apps libs
+        run: uvx --from rust-just just typecheck
 
       # AD-016: the committed schema is the contract. A route change that was
       # never exported fails here rather than breaking an n8n workflow on the
