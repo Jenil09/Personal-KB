@@ -1,8 +1,9 @@
 """The `/v1` client — one `httpx.AsyncClient`, problem+json mapped back to errors.
 
-Async because the Textual app is async and holding a second, synchronous client
-for the subcommands would mean two code paths to the same endpoints. The
-subcommands wrap this in `asyncio.run`; the TUI awaits it on its own loop.
+Async throughout, because every consumer already is: `kb-cli`'s Textual app
+awaits it on its own loop and its subcommands wrap it in `asyncio.run`. Holding
+a second, synchronous client for the synchronous callers would mean two code
+paths to the same endpoints.
 
 **Errors arrive as `PlatformError` subclasses, not as status codes.** The service
 raises `NotFoundError`, serialises it to RFC 9457, and this reverses that: the
@@ -12,7 +13,7 @@ and means the same thing the service meant, and the `detail` the operator reads
 is the sentence the service wrote rather than one this file invented.
 
 One client per process, opened in a context manager. Explicit timeouts on every
-call, and ingest gets a longer one than the rest (see `KbCliSettings`).
+call, and ingest gets a longer one than the rest (see `KbClientSettings`).
 """
 
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -23,8 +24,8 @@ from uuid import UUID
 
 import httpx
 
-from kb_cli.config import KbCliSettings
-from kb_cli.models import DocumentDetail, DocumentPage, IngestResult, SearchResponse, Stats
+from kb_client.models import DocumentDetail, DocumentPage, IngestResult, SearchResponse, Stats
+from kb_client.settings import KbClientSettings
 from platform_core import (
     AuthenticationError,
     AuthorizationError,
@@ -58,9 +59,11 @@ _BY_STATUS: dict[int, type[PlatformError]] = {cls.status_code: cls for cls in _B
 
 
 class KbClient:
-    """Everything `kb-cli` asks of `kb-api`, and nothing else."""
+    """Everything a consumer asks of `kb-api`, and nothing else."""
 
-    def __init__(self, settings: KbCliSettings, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self, settings: KbClientSettings, transport: httpx.AsyncBaseTransport | None = None
+    ):
         self._settings = settings
         self._client = httpx.AsyncClient(
             base_url=f"{settings.base_url}/v1",
@@ -289,7 +292,7 @@ def _as_error(response: httpx.Response) -> PlatformError:
 
 @asynccontextmanager
 async def open_client(
-    settings: KbCliSettings, transport: httpx.AsyncBaseTransport | None = None
+    settings: KbClientSettings, transport: httpx.AsyncBaseTransport | None = None
 ) -> AsyncIterator[KbClient]:
     client = KbClient(settings, transport=transport)
     try:

@@ -16,9 +16,9 @@ from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
-from kb_cli.client import KbClient
-from kb_cli.models import Stats
 from kb_cli.render import stats_view
+from kb_client.client import KbClient
+from kb_client.models import Stats
 
 if TYPE_CHECKING:
     from kb_cli.tui.app import KbApp

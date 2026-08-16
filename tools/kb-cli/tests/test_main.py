@@ -12,8 +12,8 @@ import pytest
 import typer
 
 from kb_cli import __main__, cli
-from kb_cli.client import KbClient
 from kb_cli.config import KbCliSettings
+from kb_client.client import KbClient
 from platform_core import NotFoundError, UpstreamError
 
 

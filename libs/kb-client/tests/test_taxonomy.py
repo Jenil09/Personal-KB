@@ -2,7 +2,7 @@
 
 import pytest
 
-from kb_cli.taxonomy import (
+from kb_client.taxonomy import (
     DEFAULT_TYPE,
     DOCUMENT_TYPES,
     MAX_TAGS,

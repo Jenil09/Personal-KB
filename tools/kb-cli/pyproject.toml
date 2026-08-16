@@ -4,10 +4,12 @@ version = "0.1.0"
 description = "Operator client for kb-api: ingestion, search, and an interactive document browser"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    # `platform-core` for the error hierarchy and the settings base, and nothing
-    # else from the workspace. This tool is an HTTP client of a deployed service
-    # (AD-025); depending on `kb-api` would let it drift into importing the
-    # service's internals and stop being one.
+    # `kb-client` for the `/v1` contract and `platform-core` for the error
+    # hierarchy and the settings base, and nothing else from the workspace. This
+    # tool is an HTTP client of a deployed service (AD-025); depending on
+    # `kb-api` would let it drift into importing the service's internals and
+    # stop being one.
+    "kb-client",
     "platform-core",
     "httpx>=0.28.0",
     # Resolves the per-OS config directory. Two dozen lines to hand-roll and all
@@ -38,4 +40,5 @@ module-name = "kb_cli"
 module-root = "src"
 
 [tool.uv.sources]
+kb-client = { workspace = true }
 platform-core = { workspace = true }

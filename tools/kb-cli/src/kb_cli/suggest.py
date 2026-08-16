@@ -33,9 +33,9 @@ from typing import Any
 
 import httpx
 
-from kb_cli.client import KbClient
 from kb_cli.config import SuggestSettings
-from kb_cli.taxonomy import DOCUMENT_TYPES, MAX_TAGS, coerce_type, normalise_tags, normalise_type
+from kb_client.client import KbClient
+from kb_client.taxonomy import DOCUMENT_TYPES, MAX_TAGS, coerce_type, normalise_tags, normalise_type
 from platform_core import ConfigurationError, UpstreamError
 
 __all__ = [

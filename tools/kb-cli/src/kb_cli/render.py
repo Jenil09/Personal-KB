@@ -17,8 +17,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from kb_cli.models import DocumentDetail, DocumentPage, IngestResult, SearchResponse, Stats
 from kb_cli.suggest import MetadataSuggestion
+from kb_client.models import DocumentDetail, DocumentPage, IngestResult, SearchResponse, Stats
 
 __all__ = [
     "console",

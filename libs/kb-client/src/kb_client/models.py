@@ -2,14 +2,15 @@
 
 Restated rather than imported from `kb_api.api.v1.schemas`. The import would
 work today — one `uv.lock`, one `.venv` — and it would be the wrong dependency:
-`kb-cli` is installed on a laptop with `uv tool install` and talks to a service
-deployed from a different commit, so it must parse *the contract*, not whatever
-the service's source happens to say this week. A client that cannot be older
-than its server is not a client.
+`kb-cli` is installed on a laptop with `uv tool install` and `kb-mcp` is deployed
+from its own image, and both talk to a service deployed from a different commit,
+so they must parse *the contract*, not whatever the service's source happens to
+say this week. A client that cannot be older than its server is not a client.
 
 `extra="ignore"` throughout, which is the half of that argument that has teeth:
-a service that adds a response field must not break every installed copy of the
-CLI. Fields are only added here when this tool has something to do with them.
+a service that adds a response field must not break every installed copy of
+every consumer. Fields are only added here when a consumer has something to do
+with them.
 """
 
 from datetime import datetime

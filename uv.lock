@@ -7,6 +7,7 @@ members = [
     "ai-embeddings",
     "kb-api",
     "kb-cli",
+    "kb-client",
     "platform-core",
     "platform-db",
     "platform-fastapi",
@@ -708,6 +709,7 @@ version = "0.1.0"
 source = { editable = "tools/kb-cli" }
 dependencies = [
     { name = "httpx" },
+    { name = "kb-client" },
     { name = "platform-core" },
     { name = "platformdirs" },
     { name = "rich" },
@@ -723,6 +725,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
+    { name = "kb-client", editable = "libs/kb-client" },
     { name = "platform-core", editable = "libs/platform-core" },
     { name = "platformdirs", specifier = ">=4.5.0" },
     { name = "rich", specifier = ">=14.0.0" },
@@ -732,6 +735,21 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "textual-dev", specifier = ">=1.7.0" }]
+
+[[package]]
+name = "kb-client"
+version = "0.1.0"
+source = { editable = "libs/kb-client" }
+dependencies = [
+    { name = "httpx" },
+    { name = "platform-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "platform-core", editable = "libs/platform-core" },
+]
 
 [[package]]
 name = "librt"
