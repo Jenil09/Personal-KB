@@ -1,6 +1,10 @@
 """`HttpServiceSettings` — what the operator types, and what happens when they
 type it wrong. The environment is emptied first so a developer's own `.env`
-cannot change an outcome."""
+cannot change an outcome.
+
+The key format itself belongs to `platform_core.auth` and is tested there, in
+every malformed shape. What these assert is that this class still declares those
+fields — a `KB_API__API_KEYS` that stopped parsing would fail here too."""
 
 import os
 from collections.abc import Iterator
@@ -35,17 +39,8 @@ def test_api_keys_parse_from_a_comma_separated_string(monkeypatch: pytest.Monkey
     assert settings.api_keys["cli"].get_secret_value() == "secret-two"
 
 
-def test_secrets_do_not_appear_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:secret-one")
-    settings = ExampleSettings()
-
-    assert "secret-one" not in repr(settings)
-    assert "secret-one" not in str(settings.api_keys["n8n"])
-
-
-@pytest.mark.parametrize("value", ["", "no-separator", "n8n:", ":secret", " , "])
-def test_malformed_api_keys_name_the_variable(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("EXAMPLE__API_KEYS", value)
+def test_malformed_api_keys_name_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXAMPLE__API_KEYS", "no-separator")
     with pytest.raises(ConfigurationError) as caught:
         ExampleSettings()
     assert "EXAMPLE__API_KEYS" in str(caught.value)
@@ -104,20 +99,3 @@ def test_scopes_parse_from_a_comma_separated_string(monkeypatch: pytest.MonkeyPa
 def test_scopes_default_to_empty_meaning_unrestricted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:one")
     assert ExampleSettings().api_key_scopes == {}
-
-
-def test_a_secret_containing_a_colon_survives(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Why scopes are their own setting rather than a third field on `api_keys`:
-    the key parser splits once, so a colon in the secret is not ambiguous — but
-    it would be if scopes came after it."""
-    monkeypatch.setenv("EXAMPLE__API_KEYS", "cli:aa:bb:cc")
-    assert ExampleSettings().api_keys["cli"].get_secret_value() == "aa:bb:cc"
-
-
-@pytest.mark.parametrize("value", ["n8n", "n8n:", ":search"])
-def test_malformed_scopes_are_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("EXAMPLE__API_KEYS", "n8n:one")
-    monkeypatch.setenv("EXAMPLE__API_KEY_SCOPES", value)
-
-    with pytest.raises(ConfigurationError):
-        ExampleSettings()
