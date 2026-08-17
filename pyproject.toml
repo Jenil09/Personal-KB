@@ -68,7 +68,7 @@ ignore = [
 "**/scripts/**" = ["T201"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["kb_api", "kb_cli", "kb_client", "platform_core", "platform_fastapi", "platform_db", "ai_embeddings"]
+known-first-party = ["kb_api", "kb_cli", "kb_client", "kb_mcp", "platform_core", "platform_fastapi", "platform_db", "ai_embeddings"]
 
 [tool.mypy]
 python_version = "3.13"

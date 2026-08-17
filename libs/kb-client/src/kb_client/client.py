@@ -65,12 +65,15 @@ class KbClient:
         self, settings: KbClientSettings, transport: httpx.AsyncBaseTransport | None = None
     ):
         self._settings = settings
+        # AD-011's scheme. The key is attached once, here, rather than by each
+        # call site — a request that forgot it would get a 401 that looks
+        # exactly like a wrong key.
+        headers = {"Authorization": f"Bearer {settings.api_key.get_secret_value()}"}
+        if settings.user_agent:
+            headers["User-Agent"] = settings.user_agent
         self._client = httpx.AsyncClient(
             base_url=f"{settings.base_url}/v1",
-            # AD-011's scheme. The key is attached once, here, rather than by
-            # each call site — a request that forgot it would get a 401 that
-            # looks exactly like a wrong key.
-            headers={"Authorization": f"Bearer {settings.api_key.get_secret_value()}"},
+            headers=headers,
             timeout=httpx.Timeout(settings.timeout_seconds),
             # Injected by the tests, which serve the `/v1` contract — including
             # real problem+json bodies — over `MockTransport`. Deliberately not

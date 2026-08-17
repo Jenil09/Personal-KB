@@ -45,6 +45,16 @@ class KbClientSettings(BaseServiceSettings):
     default, which is one fewer place for the two to disagree.
     """
 
+    user_agent: str | None = None
+    """What this consumer calls itself, sent on every request.
+
+    `platform-fastapi`'s audit middleware records it on the tier-1 row, so this
+    is what makes MCP traffic separable from CLI traffic in
+    `kb_audit.request_logs` — both hold their own key, but a `key_id` says which
+    credential was used and not which program used it. `None` leaves httpx's
+    default, which is what an unconfigured consumer deserves.
+    """
+
     timeout_seconds: float = Field(default=30.0, gt=0)
 
     ingest_timeout_seconds: float = Field(default=300.0, gt=0)
