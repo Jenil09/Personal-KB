@@ -31,8 +31,13 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
 
+      # Through `just`, not a copy of the command. The copy that used to live
+      # here was `mypy apps libs`, which fails outright on `Duplicate module
+      # named "conftest"` — two members having a `tests/conftest.py` is normal,
+      # and the recipe checks each suite in its own pass for exactly that
+      # reason. `uvx` rather than a setup action, since uv is already here.
       - name: Types
-        run: uv run mypy apps libs
+        run: uvx --from rust-just just typecheck
 
       # AD-016: the committed schema is the contract. A route change that was
       # never exported fails here rather than breaking an n8n workflow on the
@@ -78,6 +83,54 @@ jobs:
             exit 1
           fi
           echo "no ports: key in compose.prod.yml"
+
+  # Same lesson as the kb-api image job: a Containerfile that only ever gets
+  # built at deploy time is one whose breakage is discovered at deploy time.
+  # kb-mcp has no driver extras, but it does have an entry point that must
+  # resolve inside the image (`python -m kb_mcp`) and an `httpx2` TLS path
+  # that uses the OS trust store rather than certifi.
+  image-mcp:
+    name: image-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: docker build -f apps/kb-mcp/Containerfile -t kb-mcp:ci .
+
+      - name: The image can import the app it serves
+        run: docker run --rm kb-mcp:ci python -c "import kb_mcp.main; print(kb_mcp.main.build_app)"
+
+      # No secrets: `__main__` turns a missing configuration into exit 2 and
+      # the variable name. That is the Phase 9 shebang check — the interpreter
+      # the CMD actually invokes exists — and the fail-fast check in one.
+      - name: The entry point fail-fasts on a missing secret
+        run: |
+          set +e
+          docker run --rm kb-mcp:ci python -m kb_mcp > /tmp/kb-mcp.out 2> /tmp/kb-mcp.err
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "::error::expected python -m kb_mcp to exit 2, got $status"
+            cat /tmp/kb-mcp.out
+            cat /tmp/kb-mcp.err
+            exit 1
+          fi
+          if ! grep -q 'KB_MCP__API_KEYS' /tmp/kb-mcp.err; then
+            echo "::error::stderr did not name KB_MCP__API_KEYS"
+            cat /tmp/kb-mcp.err
+            exit 1
+          fi
+
+      # 4.8: httpx2 validates against the OS trust store. A slim image missing
+      # ca-certificates fails here, not after a deploy. Do not "fix" a failure
+      # by pointing at certifi.
+      - name: httpx2 trusts the OS store
+        run: >
+          docker run --rm kb-mcp:ci python -c
+          "import httpx2, ssl; print(ssl.get_default_verify_paths());
+          r = httpx2.get('https://pypi.org/simple/pip/', timeout=15);
+          assert r.status_code == 200, r.status_code"
 
   integration:
     name: integration

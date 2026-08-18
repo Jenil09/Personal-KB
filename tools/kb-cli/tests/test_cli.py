@@ -19,9 +19,9 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from kb_cli import cli, render
-from kb_cli.client import KbClient
 from kb_cli.config import KbCliSettings, load_config_file
 from kb_cli.suggest import suggest_metadata
+from kb_client.client import KbClient
 
 
 @pytest.fixture

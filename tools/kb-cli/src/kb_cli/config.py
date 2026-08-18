@@ -13,6 +13,11 @@ a laptop holding a stale copy of the service's environment would otherwise point
 the CLI at a Postgres DSN it cannot reach. Nothing here overlaps with a service
 variable, so both can live in one shell without either shadowing the other.
 
+The connection itself — `base_url`, `api_key`, `provider`, and the timeouts —
+is `KbClientSettings`, shared with every other consumer of `kb-api`. What is
+added here is what only an operator at a terminal has: the editor, the metadata
+suggester, and the config file.
+
 `api_key` carries no default. A fresh install therefore fails when settings are
 constructed rather than at the first request — the rule `BaseServiceSettings`
 exists to enforce — and `__main__` turns that failure into the sentence that
@@ -34,7 +39,8 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from platform_core import BaseServiceSettings, ConfigurationError
+from kb_client.settings import KbClientSettings
+from platform_core import ConfigurationError
 
 __all__ = [
     "CONFIG_PATH_ENV_VAR",
@@ -236,51 +242,24 @@ class SuggestSettings(BaseModel):
         return value.rstrip("/") if value else value
 
 
-class KbCliSettings(BaseServiceSettings):
+class KbCliSettings(KbClientSettings):
+    """`KbClientSettings` plus what only an operator at a terminal needs.
+
+    The connection — `base_url`, `api_key`, `provider`, and the two timeouts —
+    is inherited, so `kb-cli` and `kb-mcp` describe it identically. Overriding
+    `env_prefix` here is what keeps it `KB_CLI__*` on a laptop: pydantic merges
+    `model_config` down the inheritance chain, so the base's `KB_CLIENT__` is
+    replaced rather than added to, and a missing secret is still reported as
+    `KB_CLI__API_KEY`.
+    """
+
     model_config = SettingsConfigDict(env_prefix="KB_CLI__", env_nested_delimiter="__")
-
-    base_url: str = "http://localhost:8000"
-    """The service root, without `/v1`.
-
-    Locally this is the port `just run` binds. Against production it is the
-    tailnet address `tailscale serve` publishes — AD-023 leaves no other way in,
-    which is why this defaults to the development value rather than a hostname
-    that only resolves from a tailnet-joined machine.
-    """
-
-    api_key: SecretStr
-
-    provider: str | None = None
-    """Which embedding provider's collection to work against (AD-006).
-
-    `None` sends no `provider` field at all and lets the service apply its own
-    default, which is one fewer place for the two to disagree.
-    """
-
-    timeout_seconds: float = Field(default=30.0, gt=0)
-
-    ingest_timeout_seconds: float = Field(default=300.0, gt=0)
-    """Ingest gets its own budget because it is not the same shape of request.
-
-    A search is one embedding call; ingesting a large document is a chunked
-    embed of the whole thing, and the corpus averages ~0.5 MB a file. One
-    timeout covering both would be either too tight for ingest or useless for
-    search.
-    """
 
     editor: str | None = None
     """Overrides `$VISUAL`/`$EDITOR` for the compose-a-document action."""
 
     suggest: SuggestSettings = SuggestSettings()
     """Metadata suggestion (AD-026). Absent from a config file means off."""
-
-    @field_validator("base_url", mode="after")
-    @classmethod
-    def _strip_trailing_slash(cls, value: str) -> str:
-        # `httpx.AsyncClient(base_url=...)` joins paths differently depending on
-        # whether the base ends in a slash. Normalising here means a config that
-        # says `http://kb-api:8000/` and one that does not build the same URL.
-        return value.rstrip("/")
 
     @classmethod
     def settings_customise_sources(

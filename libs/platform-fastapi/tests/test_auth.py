@@ -1,12 +1,16 @@
-"""Bearer authentication and caller attribution (AD-011)."""
+"""Bearer authentication and caller attribution (AD-011), through the app.
+
+The registry and the scope rules are `platform_core.auth`'s and are tested
+there. What is asserted here is the HTTP behaviour built on them: which status
+code a caller sees, what the response says, and which routes the dependency
+reaches without being asked for.
+"""
 
 import httpx
 import pytest
 from fastapi import APIRouter, Depends
-from pydantic import SecretStr
 
-from platform_core import AuthenticationError
-from platform_fastapi import ApiKeyRegistry, CurrentPrincipal, Principal, require_scope
+from platform_fastapi import CurrentPrincipal, require_scope
 
 
 @pytest.fixture
@@ -111,28 +115,6 @@ async def test_openapi_documents_the_scheme_and_leaves_health_open(
     assert "security" not in schema["paths"]["/health"]["get"]
 
 
-def test_registry_resolves_the_matching_key() -> None:
-    registry = ApiKeyRegistry({"n8n": SecretStr("one"), "cli": SecretStr("two")})
-
-    assert registry.resolve("one") == Principal(key_id="n8n")
-    assert registry.resolve("two") == Principal(key_id="cli")
-
-
-def test_registry_rejects_an_unknown_key() -> None:
-    registry = ApiKeyRegistry({"n8n": SecretStr("one")})
-
-    with pytest.raises(AuthenticationError) as caught:
-        registry.resolve("two")
-    assert caught.value.status_code == 401
-
-
-def test_registry_rejects_a_prefix_of_a_real_key() -> None:
-    registry = ApiKeyRegistry({"n8n": SecretStr("secret-value")})
-
-    with pytest.raises(AuthenticationError):
-        registry.resolve("secret")
-
-
 # --- scopes (AD-024) ------------------------------------------------------
 
 
@@ -199,27 +181,3 @@ async def test_a_key_with_no_scope_entry_is_unrestricted(make_app, client_for, v
 
     async with client_for(make_app(routers=[router])) as client:
         assert (await client.delete("/v1/thing", headers=_auth(valid_key))).status_code == 200
-
-
-def test_registry_carries_the_grants_it_was_given() -> None:
-    registry = ApiKeyRegistry(
-        {"n8n": SecretStr("one"), "cli": SecretStr("two")},
-        {"n8n": frozenset({"search"})},
-    )
-
-    assert registry.resolve("one") == Principal(key_id="n8n", scopes=frozenset({"search"}))
-    # No entry, so unrestricted — `None`, not an empty set.
-    assert registry.resolve("two") == Principal(key_id="cli", scopes=None)
-
-
-@pytest.mark.parametrize(
-    ("scopes", "scope", "expected"),
-    [
-        (None, "write", True),
-        (frozenset({"search", "write"}), "write", True),
-        (frozenset({"search"}), "write", False),
-        (frozenset(), "search", False),
-    ],
-)
-def test_has_scope(scopes: frozenset[str] | None, scope: str, expected: bool) -> None:
-    assert Principal(key_id="k", scopes=scopes).has_scope(scope) is expected

@@ -22,13 +22,13 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Label, Static
 
-from kb_cli.client import KbClient
 from kb_cli.editor import edit_text
-from kb_cli.models import DocumentDetail, DocumentSummary
 from kb_cli.render import humanise_bytes, short_id
 from kb_cli.suggest import MetadataSuggestion, collect_tag_vocabulary, suggest_metadata
 from kb_cli.tui.modals import ConfirmScreen, DocumentMetadata, MetadataScreen, Suggester
 from kb_cli.tui.viewer import ViewerScreen
+from kb_client.client import KbClient
+from kb_client.models import DocumentDetail, DocumentSummary
 from platform_core import PlatformError
 
 if TYPE_CHECKING:

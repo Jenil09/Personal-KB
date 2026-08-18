@@ -94,9 +94,9 @@ def test_the_datastores_are_on_an_internal_network_only(compose: dict[str, Any])
 
 
 def test_kb_api_sits_on_every_network(compose: dict[str, Any]) -> None:
-    """The asymmetry is the design (Design §6): kb-api on all four, everything
-    else on exactly one. Each consumer and each dependency reaches kb-api and
-    nothing else."""
+    """The asymmetry is the design (Design §6): kb-api on all four. kb-mcp is
+    the other multi-network service — tailnet + shared + egress, never
+    kb-internal — and everything else sits on exactly one."""
     assert set(compose["services"]["kb-api"]["networks"]) == {
         "kb-internal",
         "kb-shared",
@@ -126,6 +126,17 @@ def test_the_proxy_target_is_unambiguous_on_the_tailnet(compose: dict[str, Any])
     assert target not in tailnet_hostname, (
         f"the proxy target {target!r} collides with the tailscale container's "
         f"hostname {tailnet_hostname!r}; the proxy will resolve to itself"
+    )
+
+    mcp_handler = serve["Web"]["${TS_CERT_DOMAIN}:8443"]["Handlers"]["/"]
+    mcp_target = urlsplit(mcp_handler["Proxy"]).hostname
+    mcp_aliases = compose["services"]["kb-mcp"]["networks"]["kb-tailnet"]["aliases"]
+    assert mcp_target in mcp_aliases, (
+        f"serve.json :8443 proxies to {mcp_target!r}, which is not an alias of kb-mcp on kb-tailnet"
+    )
+    assert mcp_target not in tailnet_hostname, (
+        f"the mcp proxy target {mcp_target!r} collides with the tailscale "
+        f"container's hostname {tailnet_hostname!r}"
     )
 
 
@@ -166,6 +177,24 @@ def test_the_audit_spill_survives_the_container(compose: dict[str, Any]) -> None
     mounts = compose["services"]["kb-api"]["volumes"]
     assert any(str(mount).startswith("kb-audit-spill:") for mount in mounts)
     assert "kb-audit-spill" in compose["volumes"]
+
+
+def test_kb_mcp_is_a_client_of_the_api_not_of_the_datastores(compose: dict[str, Any]) -> None:
+    """kb-mcp reaches kb-api the way n8n does, and cannot address Postgres.
+
+    Off `kb-internal` so a compromised MCP process has no route to the
+    stores; on `kb-shared` so the name `kb-api` is unambiguous (the tailscale
+    container is not on that network) and so n8n can reach `/health`.
+    """
+    mcp = compose["services"]["kb-mcp"]
+
+    assert set(mcp["networks"]) == {"kb-shared", "egress", "kb-tailnet"}
+    assert mcp["networks"]["kb-tailnet"]["aliases"] == ["kb-mcp-upstream"]
+    assert mcp["expose"] == ["9000"]
+    assert "no-new-privileges:true" in mcp["security_opt"]
+    assert mcp["depends_on"]["kb-api"]["condition"] == "service_healthy"
+    assert mcp.get("healthcheck"), "kb-mcp must have a /health probe"
+    assert "ports" not in mcp
 
 
 def test_every_long_running_service_restarts(compose: dict[str, Any]) -> None:

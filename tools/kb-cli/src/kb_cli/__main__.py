@@ -11,6 +11,7 @@ command that fixes it rather than the pydantic field that raised it.
 """
 
 import sys
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -19,10 +20,16 @@ from kb_cli.cli import app
 from kb_cli.config import CONFIG_PATH_ENV_VAR, config_path
 from platform_core import ConfigurationError, PlatformError
 
+if TYPE_CHECKING:
+    # For the annotation below only. The runtime import is the guarded one
+    # inside `_usage_error_types`; naming the class here is what lets a checker
+    # see `.show()` and `.exit_code` on the exception the handler catches.
+    from typer._click.exceptions import ClickException
+
 __all__ = ["main"]
 
 
-def _usage_error_types() -> tuple[type[BaseException], ...]:
+def _usage_error_types() -> tuple[type["ClickException"], ...]:
     """`ClickException`, from wherever this Typer keeps it.
 
     Typer 0.27 vendors its own copy of Click and does **not** depend on the
@@ -37,7 +44,7 @@ def _usage_error_types() -> tuple[type[BaseException], ...]:
     try:
         from typer._click.exceptions import ClickException
     except ImportError:  # pragma: no cover - Typer without a vendored Click
-        from click.exceptions import ClickException  # type: ignore[no-redef]
+        from click.exceptions import ClickException  # type: ignore[assignment]
     return (ClickException,)
 
 

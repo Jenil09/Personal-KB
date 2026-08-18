@@ -21,10 +21,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Label, Static
 
-from kb_cli.client import KbClient
-from kb_cli.models import SearchHit, SearchResponse
 from kb_cli.render import short_id
 from kb_cli.tui.viewer import ViewerScreen
+from kb_client.client import KbClient
+from kb_client.models import SearchHit, SearchResponse
 
 if TYPE_CHECKING:
     from kb_cli.tui.app import KbApp

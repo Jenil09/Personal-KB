@@ -1,5 +1,11 @@
 """Shared settings, logging, and error primitives for Redshift7 services."""
 
+from platform_core.auth import (
+    ApiKeyRegistry,
+    ApiKeys,
+    ApiKeyScopes,
+    Principal,
+)
 from platform_core.context import (
     REQUEST_ID_HEADER,
     coerce_request_id,
@@ -24,6 +30,9 @@ from platform_core.settings import BaseServiceSettings, Environment, LogLevel
 
 __all__ = [
     "REQUEST_ID_HEADER",
+    "ApiKeyRegistry",
+    "ApiKeyScopes",
+    "ApiKeys",
     "AuthenticationError",
     "AuthorizationError",
     "BaseServiceSettings",
@@ -34,6 +43,7 @@ __all__ = [
     "NotFoundError",
     "PayloadTooLargeError",
     "PlatformError",
+    "Principal",
     "RateLimitedError",
     "UpstreamError",
     "ValidationError",

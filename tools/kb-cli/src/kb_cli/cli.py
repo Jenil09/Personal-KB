@@ -23,7 +23,6 @@ from uuid import UUID
 import typer
 
 from kb_cli import render
-from kb_cli.client import KbClient, open_client
 from kb_cli.config import (
     KbCliSettings,
     config_path,
@@ -35,9 +34,10 @@ from kb_cli.config import (
 from kb_cli.config import save_config_file as _save_config_file
 from kb_cli.editor import edit_text
 from kb_cli.ingest import DEFAULT_EXCLUDES, DEFAULT_GLOBS, discover, read_documents
-from kb_cli.models import DocumentSummary
 from kb_cli.suggest import MetadataSuggestion, collect_tag_vocabulary, suggest_metadata
-from kb_cli.taxonomy import DOCUMENT_TYPES, normalise_tags, normalise_type
+from kb_client.client import KbClient, open_client
+from kb_client.models import DocumentSummary
+from kb_client.taxonomy import DOCUMENT_TYPES, normalise_tags, normalise_type
 from platform_core import ConfigurationError, NotFoundError, PlatformError, ValidationError
 
 __all__ = ["app"]

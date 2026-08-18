@@ -26,12 +26,12 @@ from textual.app import App
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 
-from kb_cli.client import KbClient
 from kb_cli.config import KbCliSettings, load_settings
 from kb_cli.tui.documents import DocumentsScreen
 from kb_cli.tui.search import SearchScreen
 from kb_cli.tui.settings import SettingsScreen
 from kb_cli.tui.status import StatusScreen
+from kb_client.client import KbClient
 from platform_core import ConfigurationError, PlatformError
 
 __all__ = ["KbApp"]

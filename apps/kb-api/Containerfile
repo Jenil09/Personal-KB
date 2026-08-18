@@ -44,13 +44,18 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /build
 
 # Layer one: dependencies only. Every workspace member's pyproject is needed for
-# the resolution to succeed, but none of their sources are.
+# the lockfile's workspace glob to match the builder, but none of their sources
+# are. Members this image does not run (kb-mcp, kb-client, kb-cli) are listed
+# so `uv sync --frozen` does not see a smaller workspace than the lock.
 COPY pyproject.toml uv.lock .python-version ./
 COPY apps/kb-api/pyproject.toml apps/kb-api/
+COPY apps/kb-mcp/pyproject.toml apps/kb-mcp/
 COPY libs/ai-embeddings/pyproject.toml libs/ai-embeddings/
+COPY libs/kb-client/pyproject.toml libs/kb-client/
 COPY libs/platform-core/pyproject.toml libs/platform-core/
 COPY libs/platform-db/pyproject.toml libs/platform-db/
 COPY libs/platform-fastapi/pyproject.toml libs/platform-fastapi/
+COPY tools/kb-cli/pyproject.toml tools/kb-cli/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package kb-api

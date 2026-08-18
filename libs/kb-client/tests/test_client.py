@@ -12,8 +12,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from kb_cli.client import KbClient
-from kb_cli.config import KbCliSettings
+from kb_client.client import KbClient
+from kb_client.settings import KbClientSettings
 from platform_core import (
     AuthenticationError,
     AuthorizationError,
@@ -27,7 +27,7 @@ from platform_core import (
 
 
 @pytest.fixture
-def client(service, settings: KbCliSettings) -> KbClient:
+def client(service, settings: KbClientSettings) -> KbClient:
     return KbClient(settings, transport=service.transport)
 
 
@@ -195,7 +195,7 @@ async def test_ingest_omits_the_provider_when_none_is_configured(client: KbClien
     assert "provider" not in json.loads(service.requests[-1].content)
 
 
-async def test_ingest_uses_the_configured_provider(service, settings: KbCliSettings) -> None:
+async def test_ingest_uses_the_configured_provider(service, settings: KbClientSettings) -> None:
     client = KbClient(
         settings.model_copy(update={"provider": "gemini"}), transport=service.transport
     )
@@ -206,7 +206,7 @@ async def test_ingest_uses_the_configured_provider(service, settings: KbCliSetti
 
 
 async def test_an_explicit_provider_beats_the_configured_one(
-    service, settings: KbCliSettings
+    service, settings: KbClientSettings
 ) -> None:
     client = KbClient(
         settings.model_copy(update={"provider": "gemini"}), transport=service.transport
@@ -320,7 +320,7 @@ async def test_the_request_id_survives_onto_the_error(client: KbClient, service)
 
 
 async def test_a_wrong_key_is_an_authentication_error(
-    service, settings: KbCliSettings, api_key: str
+    service, settings: KbClientSettings, api_key: str
 ) -> None:
     client = KbClient(
         settings.model_copy(update={"api_key": settings.api_key.__class__("wrong")}),
@@ -344,7 +344,7 @@ async def test_a_non_problem_body_still_produces_the_right_class(client: KbClien
         await broken.list_documents()
 
 
-async def test_an_unreachable_service_is_an_upstream_error(settings: KbCliSettings) -> None:
+async def test_an_unreachable_service_is_an_upstream_error(settings: KbClientSettings) -> None:
     """The common laptop case: a dropped tailnet session, or `just up` not run."""
     import httpx
 
@@ -357,7 +357,7 @@ async def test_an_unreachable_service_is_an_upstream_error(settings: KbCliSettin
         await client.list_documents()
 
 
-async def test_a_timeout_is_an_upstream_error(settings: KbCliSettings) -> None:
+async def test_a_timeout_is_an_upstream_error(settings: KbClientSettings) -> None:
     import httpx
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -369,7 +369,7 @@ async def test_a_timeout_is_an_upstream_error(settings: KbCliSettings) -> None:
         await client.list_documents()
 
 
-async def test_the_client_closes_its_connection_pool(service, settings: KbCliSettings) -> None:
+async def test_the_client_closes_its_connection_pool(service, settings: KbClientSettings) -> None:
     async with KbClient(settings, transport=service.transport) as client:
         await client.list_documents()
 

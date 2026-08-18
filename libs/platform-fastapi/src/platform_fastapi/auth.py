@@ -1,32 +1,25 @@
-"""Bearer-token authentication with caller attribution (AD-011) and scopes (AD-024).
+"""The HTTP half of bearer authentication: read the header, resolve, attribute.
 
-Keys come from environment configuration as `key_id:secret` pairs. The secret
-authenticates; the `key_id` is what makes the audit trail worth keeping, so it
-is put on the ASGI scope where the tier-1 audit middleware (AD-013) can reach
-it without a dependency of its own.
+`Principal` and `ApiKeyRegistry` live in `platform_core.auth` — they are needed
+by services that hold no web framework — and are re-exported here so this
+module's callers, `kb-api` among them, see one place for the whole subject.
 
-Each key also carries a scope set, which is what stops the n8n key — held by a
-workflow that processes scraped, untrusted content — from being able to delete
-the corpus. Attribution says afterwards which key did it; scopes are what makes
-it not happen. The vocabulary is the service's own (`search`, `write` in
-`kb-api`), so nothing here enumerates the valid names: this module only compares
-what a route requires against what a key was granted.
+The `key_id` a registry resolves is put on the ASGI scope, where the tier-1
+audit middleware (AD-013) can reach it without a dependency of its own.
 
 `/health` is unauthenticated. That is not a rule enforced here — `create_app`
 simply mounts the health router without this dependency and every `/v1` router
 with it, so a new router cannot be added unauthenticated by forgetting a flag.
 """
 
-import hmac
-from collections.abc import Callable, Coroutine, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import SecretStr
 
 from platform_core import AuthenticationError, AuthorizationError
+from platform_core.auth import ApiKeyRegistry, Principal
 
 __all__ = [
     "ApiKeyRegistry",
@@ -43,70 +36,6 @@ _bearer = HTTPBearer(
     description="`Authorization: Bearer <api key>`. Required on every route except `/health`.",
     auto_error=False,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class Principal:
-    """The authenticated caller. `key_id` is recorded on every audit row."""
-
-    key_id: str
-    scopes: frozenset[str] | None = None
-    """What this key may do, or `None` for a key with no scope entry.
-
-    `None` means unrestricted rather than "no scopes". The distinction is the
-    whole reason this is not just an empty set: an operator who configures keys
-    and forgets to configure scopes gets a working service, not one where every
-    valid key is refused. `HttpServiceSettings.api_key_scopes` documents the
-    trade-off; `create_app` logs the resolved grants at startup so the
-    permissive case is visible rather than assumed.
-    """
-
-    def has_scope(self, scope: str) -> bool:
-        return self.scopes is None or scope in self.scopes
-
-
-class ApiKeyRegistry:
-    """Resolves a presented key to the caller it belongs to, with its grants."""
-
-    def __init__(
-        self,
-        api_keys: Mapping[str, SecretStr],
-        scopes: Mapping[str, frozenset[str]] | None = None,
-    ) -> None:
-        granted = scopes or {}
-        self._keys = tuple(
-            (key_id, secret.get_secret_value().encode(), granted.get(key_id))
-            for key_id, secret in api_keys.items()
-        )
-
-    @property
-    def grants(self) -> tuple[tuple[str, frozenset[str] | None], ...]:
-        """Every key id and what it was granted, for the startup log."""
-        return tuple((key_id, scopes) for key_id, _, scopes in self._keys)
-
-    def identify(self, presented: str) -> Principal | None:
-        """Resolve without raising. `None` for a key that is not recognised.
-
-        The rate limiter needs the caller's identity *before* the router's auth
-        dependency has run, and it must not turn an unrecognised key into a
-        `403`-shaped failure of its own — that request has a `401` coming, and
-        the limiter's job is only to decide whose counter it belongs to.
-        """
-        candidate = presented.encode()
-        matched: Principal | None = None
-        for key_id, secret, scopes in self._keys:
-            if hmac.compare_digest(candidate, secret):
-                matched = Principal(key_id=key_id, scopes=scopes)
-        return matched
-
-    def resolve(self, presented: str) -> Principal:
-        # No early exit inside `identify`: every configured key is compared on
-        # every attempt, so how long the check takes says nothing about which
-        # key matched.
-        matched = self.identify(presented)
-        if matched is None:
-            raise AuthenticationError("The presented API key is not recognised.")
-        return matched
 
 
 async def require_api_key(

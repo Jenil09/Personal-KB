@@ -6,14 +6,15 @@
 # line, added for a debugging session and never removed, and the service is on
 # the public internet with the host firewall none the wiser.
 #
-# Four checks, run against the *running* stack on the VPS:
+# Checks, run against the *running* stack on the VPS:
 #
 #   1. `compose ps` reports no published port for any service
-#   2. nothing in this stack is listening on a host interface
-#   3. the API is unreachable from the host itself
-#   4. from the n8n container, kb-api answers and Postgres and Chroma do not
+#   2. the file itself has no `ports:` key
+#   3. nothing in this stack is listening on a host interface
+#   4. the API (and kb-mcp) are unreachable from the host itself
+#   5. from the n8n container, kb-api and kb-mcp answer; Postgres and Chroma do not
 #
-# Check 4 is the one that proves the network asymmetry rather than just the
+# Check 5 is the one that proves the network asymmetry rather than just the
 # absence of a binding: n8n reaching Postgres would mean `kb-shared` and
 # `kb-internal` had been collapsed into one, which no other check would notice.
 #
@@ -51,22 +52,27 @@ fi
 echo "3. nothing from this stack listens on a host interface"
 # Docker's DNAT rules are installed by dockerd, so a published port shows up as
 # a docker-proxy listener rather than as one owned by the container.
-listeners=$(ss -tlnp 2>/dev/null | grep -E ':(8000|5432|8001|5433)\b' || true)
+listeners=$(ss -tlnp 2>/dev/null | grep -E ':(8000|5432|8001|5433|9000)\b' || true)
 if [[ -z "$listeners" ]]; then
-    pass "no listener on 8000/5432/8001/5433"
+    pass "no listener on 8000/5432/8001/5433/9000"
 else
     fail "host listeners found:"
     printf '       %s\n' "$listeners"
 fi
 
-echo "4. the API is unreachable from the host"
+echo "4. the API and kb-mcp are unreachable from the host"
 if curl --silent --show-error --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then
     fail "http://127.0.0.1:8000/health answered from the host"
 else
     pass "http://127.0.0.1:8000/health does not answer from the host"
 fi
+if curl --silent --show-error --max-time 3 http://127.0.0.1:9000/health >/dev/null 2>&1; then
+    fail "http://127.0.0.1:9000/health answered from the host"
+else
+    pass "http://127.0.0.1:9000/health does not answer from the host"
+fi
 
-echo "5. from n8n: kb-api yes, datastores no"
+echo "5. from n8n: kb-api and kb-mcp yes, datastores no"
 if ! docker ps --format '{{.Names}}' | grep -qx "$N8N_CONTAINER"; then
     note "container '$N8N_CONTAINER' not running; set N8N_CONTAINER to check this"
 else
@@ -78,6 +84,11 @@ else
         pass "n8n reaches kb-api on kb-shared"
     else
         fail "n8n cannot reach http://kb-api:8000/health — is it on kb-shared?"
+    fi
+    if probe http://kb-mcp:9000/health; then
+        pass "n8n reaches kb-mcp on kb-shared"
+    else
+        fail "n8n cannot reach http://kb-mcp:9000/health — is it on kb-shared?"
     fi
     if tcp postgres 5432; then
         fail "n8n reached Postgres; kb-internal is not isolating it"
@@ -93,7 +104,7 @@ fi
 
 echo
 if (( failures == 0 )); then
-    echo "AD-023 holds: no host port, and each consumer reaches kb-api and nothing else."
+    echo "AD-023 holds: no host port, and each consumer reaches kb-api / kb-mcp and nothing else."
 else
     echo "$failures check(s) failed."
 fi

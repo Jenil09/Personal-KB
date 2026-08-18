@@ -12,7 +12,7 @@ from uuid import uuid4
 from rich.console import Console
 
 from kb_cli import render
-from kb_cli.models import (
+from kb_client.models import (
     CollectionStats,
     DocumentDetail,
     DocumentPage,

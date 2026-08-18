@@ -1,0 +1,31 @@
+[project]
+name = "kb-mcp"
+version = "0.1.0"
+description = "MCP server over the personal knowledge base, an HTTP client of kb-api"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # `kb-client` for the `/v1` contract and `platform-core` for the error
+    # hierarchy, the settings base, and the API-key registry. Deliberately
+    # **not** `platform-fastapi`: it depends on `platform-db` (AD-018), which
+    # would put SQLAlchemy and asyncpg in an image that never opens a database
+    # connection — and undo the Stage 2 move that made this possible.
+    "kb-client",
+    "platform-core",
+    # 2.0 is a major rework of the 1.x line: `MCPServer` rather than `FastMCP`,
+    # `mcp.Client` for in-memory tests, a `TokenVerifier` protocol for auth.
+    # Capped below 3 because none of that is stable across a major.
+    "mcp>=2.0,<3",
+    "uvicorn[standard]>=0.38.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "kb_mcp"
+module-root = "src"
+
+[tool.uv.sources]
+kb-client = { workspace = true }
+platform-core = { workspace = true }

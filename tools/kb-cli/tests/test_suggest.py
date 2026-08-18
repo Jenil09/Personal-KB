@@ -74,7 +74,10 @@ async def test_no_key_is_sent_when_none_is_configured(model) -> None:
 
     def handle(request: httpx.Request) -> httpx.Response:
         captured.append(request.headers)
-        return model.handle(request)
+        # Annotated rather than returned directly: `model` is a fixture
+        # parameter, so it arrives untyped (see the conftest's `api_key`).
+        response: httpx.Response = model.handle(request)
+        return response
 
     settings = SuggestSettings(base_url="http://model.test/v1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
@@ -88,7 +91,10 @@ async def test_a_configured_key_is_sent_as_a_bearer_token(model) -> None:
 
     def handle(request: httpx.Request) -> httpx.Response:
         captured.append(request.headers)
-        return model.handle(request)
+        # Annotated rather than returned directly: `model` is a fixture
+        # parameter, so it arrives untyped (see the conftest's `api_key`).
+        response: httpx.Response = model.handle(request)
+        return response
 
     settings = SuggestSettings(base_url="http://model.test/v1", api_key="sk-test")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
@@ -319,7 +325,7 @@ async def test_reduction_is_deterministic(model, suggest_settings: SuggestSettin
 
 
 async def test_the_vocabulary_is_the_corpus_tags_most_common_first(service, settings) -> None:
-    from kb_cli.client import KbClient
+    from kb_client.client import KbClient
 
     service.add("One", tags=("ansible", "security"))
     service.add("Two", tags=("security",))
@@ -333,7 +339,7 @@ async def test_the_vocabulary_is_the_corpus_tags_most_common_first(service, sett
 
 
 async def test_the_vocabulary_is_empty_for_an_empty_corpus(service, settings) -> None:
-    from kb_cli.client import KbClient
+    from kb_client.client import KbClient
 
     client = KbClient(settings, transport=service.transport)
     try:
