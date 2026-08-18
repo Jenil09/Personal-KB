@@ -5,7 +5,7 @@
 # ---------------------------------------------------------------------------
 #
 # AD-023: no container in this stack publishes a host port — not kb-api, not
-# Postgres, not Chroma. Docker installs its DNAT rules ahead of the host
+# kb-mcp, not Postgres, not Chroma. Docker installs its DNAT rules ahead of the host
 # firewall, so `ports: - "8000:8000"` is world-reachable no matter what `ufw`
 # says, and the mistake is a missing IP prefix rather than a visibly wrong line.
 # Removing the key entirely turns "bind to the right address" — a rule that has
@@ -13,15 +13,16 @@
 # `tests/test_compose_prod.py` does exactly that, and `deploy/verify-exposure.sh`
 # checks it again against the running stack.
 #
-# Networks (Design §6). kb-api sits on all four; every other container sits on
-# exactly one. That asymmetry is the design: each consumer and each dependency
-# reaches kb-api and nothing else, so n8n cannot address Postgres and the tailnet
-# cannot address Chroma.
+# Networks (Design §6). kb-api sits on all four. kb-mcp sits on tailnet +
+# shared + egress — it is a consumer of kb-api, not of the datastores, so it
+# is kept off kb-internal. Everything else sits on exactly one. That
+# asymmetry is the design: n8n cannot address Postgres, the tailnet cannot
+# address Chroma, and kb-mcp reaches kb-api the same way n8n does.
 #
 #   kb-internal  internal: true   Postgres, Chroma, kb-api — no route off host
-#   kb-shared    external: true   n8n → http://kb-api:8000, plain HTTP
-#   kb-tailnet                    tailscale → kb-api-upstream, operator entry point
-#   egress                        kb-api → the embedding provider, outbound only
+#   kb-shared    external: true   n8n → kb-api:8000 and kb-mcp:9000, plain HTTP
+#   kb-tailnet                    tailscale → kb-api-upstream / kb-mcp-upstream
+#   egress                        kb-api → the embedding provider; kb-mcp as specified
 #
 # `kb-shared` is external because n8n owns it; this stack joins, it does not
 # create. Create it once on the host if it does not exist:
@@ -191,6 +192,53 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
+  # --- MCP server ----------------------------------------------------------
+
+  # HTTP client of kb-api (AD-025), never of Postgres or Chroma. On kb-shared
+  # so n8n can reach it later and so this process can call `http://kb-api:8000`
+  # without crossing the tailscale hostname collision on kb-tailnet. The
+  # `kb-mcp-upstream` alias is the same disambiguator kb-api uses: the
+  # tailscale container's hostname is `kb-api`, so the bare name on kb-tailnet
+  # is already taken.
+  kb-mcp:
+    image: ${KB_MCP_IMAGE:-kb-mcp:latest}
+    build:
+      context: .
+      dockerfile: apps/kb-mcp/Containerfile
+    restart: unless-stopped
+    env_file: [.env.prod]
+    environment:
+      KB_MCP__ENV: production
+      # Pinned here, not only in .env.prod, so a missing line cannot silently
+      # point the client at its localhost default.
+      KB_MCP__KB_API__BASE_URL: http://kb-api:8000
+    networks:
+      kb-shared:
+      egress:
+      kb-tailnet:
+        aliases: [kb-mcp-upstream]
+    expose: ["9000"]
+    depends_on:
+      kb-api:
+        condition: service_healthy
+    healthcheck:
+      # `/health` is process liveness and nothing more — whether kb-api is
+      # reachable is what the `kb_health` tool reports. A probe that failed
+      # on an upstream outage would turn one restart into two.
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health', timeout=3).status==200 else 1)\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
   # --- operator entry point ------------------------------------------------
 
   # AD-023: the tailnet interface lives inside Docker, alongside the service,
@@ -221,11 +269,12 @@ services:
       TS_AUTHKEY: ${KB_TAILSCALE_AUTHKEY:?set in .env.prod}
       TS_USERSPACE: "true"
       TS_STATE_DIR: /var/lib/tailscale
-      # Proxies the tailnet to `kb-api-upstream` over kb-tailnet — the alias, not
-      # the service name, because `hostname` above claims `kb-api` too. The
-      # hop is why the tier-1 `client_ip` for operator traffic is this
-      # container's Docker address; `Tailscale-User-Login`, which `serve`
-      # forwards, carries the real identity and is recorded on the row.
+      # Proxies the tailnet to `kb-api-upstream` (and `kb-mcp-upstream` on
+      # :8443) over kb-tailnet — the aliases, not the service names, because
+      # `hostname` above claims `kb-api` too. The hop is why the tier-1
+      # `client_ip` for operator traffic is this container's Docker address;
+      # `Tailscale-User-Login`, which `serve` forwards, carries the real
+      # identity and is recorded on the row.
       TS_SERVE_CONFIG: /config/serve.json
       # Empty by default. `--advertise-tags` belongs here if the tailnet ACL
       # defines a tag for this node, and breaks authentication if it does not.
@@ -236,6 +285,8 @@ services:
     networks: [kb-tailnet]
     depends_on:
       kb-api:
+        condition: service_started
+      kb-mcp:
         condition: service_started
     deploy:
       resources:

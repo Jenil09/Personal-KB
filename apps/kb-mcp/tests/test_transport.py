@@ -177,6 +177,26 @@ async def test_a_valid_token_opens_a_session(app):
     assert response.headers["mcp-session-id"]
 
 
+async def test_a_foreign_host_header_is_not_a_421(app):
+    """DNS-rebinding protection is off, deliberately, not by inheriting 0.0.0.0.
+
+    The SDK 421s a Host that is not on its allowlist when the middleware is
+    enabled. A production listener behind the tailnet must not do that: the
+    Host `tailscale serve` forwards is not a stable name, and guessing one is
+    how every real connection dies with 421. The request still has to
+    authenticate — this is not an open door, it is the Host check staying out
+    of the way.
+    """
+    headers = _headers("host-token")
+    headers["Host"] = "evil.example"
+
+    async with serving(app) as http:
+        response = await http.post("/mcp", json=_initialize(), headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["mcp-session-id"]
+
+
 async def test_a_near_miss_token_is_refused(app):
     """One character short of the real key. `hmac.compare_digest`, not `==`."""
     async with serving(app) as http:

@@ -155,6 +155,11 @@ kb-uninstall:
 image tag="kb-api:latest":
     podman build -f apps/kb-api/Containerfile -t {{tag}} .
 
+# The MCP server image. Same file, two runtimes (AD-022) — Podman here, Docker
+# on the VPS. `just image` stays the kb-api recipe; this is the sibling.
+image-mcp tag="kb-mcp:latest":
+    podman build -f apps/kb-mcp/Containerfile -t {{tag}} .
+
 # Validate compose.prod.yml — YAML, interpolation, and the merged result.
 #
 # Reads `.env.prod` if it exists and `.env.prod.example` otherwise, so this is

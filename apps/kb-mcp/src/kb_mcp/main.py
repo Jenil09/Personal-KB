@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -61,13 +62,20 @@ def build_app(
     client = KbClient(resolved.kb_api, transport=transport)
     server = build_server(resolved, client)
 
-    # DNS-rebinding protection is host-dependent and is Stage 4's decision, not
-    # something to inherit silently: for a loopback host the SDK installs
-    # `TransportSecuritySettings` allowing only loopback `Host` headers, and
-    # binding `0.0.0.0` turns the protection off rather than adapting it. Left
-    # explicit here so the deployment step is a change to this line rather than
-    # an omission nobody sees.
-    mcp_app = server.streamable_http_app(host=resolved.host)
+    # DNS-rebinding protection is off on purpose, and that is passed in rather
+    # than inherited. For a loopback host the SDK would install an allowlist of
+    # loopback `Host` headers; binding `0.0.0.0` (the container default) turns
+    # that off instead of adapting it. An allowlist of the tailnet hostname is
+    # the other option and is the wrong one: `tailscale serve` does not give a
+    # stable Host, and a guessed list 421s every real connection. AD-023 is the
+    # boundary — no host-published listener — so the middleware adds nothing
+    # behind the tailnet and `kb-shared`.
+    mcp_app = server.streamable_http_app(
+        host=resolved.host,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+    )
     session_manager = server.session_manager
 
     @asynccontextmanager
@@ -81,6 +89,7 @@ def build_app(
                     for key_id, scopes in _grants(resolved)
                 },
                 ingest=resolved.allow_ingest,
+                dns_rebinding="disabled",
             )
             try:
                 yield

@@ -1,4 +1,4 @@
-# kb-api — one image, two runtimes (AD-022).
+# kb-mcp — one image, two runtimes (AD-022).
 #
 # Built with Podman locally and CI, with Docker on the VPS, from this file. It
 # carries no rootless-Podman assumption: the container drops to a non-root user
@@ -7,17 +7,18 @@
 #
 # Two stages. The builder resolves the workspace into a virtualenv; the runtime
 # carries that virtualenv and the source, and nothing else — no uv, no compiler,
-# no lockfile.
+# no lockfile. This image is an HTTP client of kb-api and never of Postgres or
+# Chroma (AD-025), so there is no Alembic tree and no audit spill path.
 #
 # The dependency layer is separated from the source layer deliberately. Editing
-# a router must not re-resolve and re-download ~80 wheels, so the first `uv sync`
+# a tool must not re-resolve and re-download the wheels, so the first `uv sync`
 # runs with only the pyproject files present and `--no-install-workspace`, which
 # is the flag that matters in a workspace: `--no-install-project` would skip the
-# root and still try to build the four members, defeating the cache.
+# root and still try to build the members, defeating the cache.
 #
-# Migrations run from this same image as a separate command (see
-# `compose.prod.yml`). `alembic` arrives via `platform-db`, so the runtime stage
-# needs nothing extra to support it.
+# `httpx2` (via `mcp`) validates TLS against the OS trust store, not certifi.
+# The runtime stage therefore installs `ca-certificates` rather than inheriting
+# whatever slim happens to ship.
 
 # --- builder ---------------------------------------------------------------
 
@@ -34,19 +35,18 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     # The virtualenv is built at the path it will be *used* at, not at the path
     # it is built at. Console scripts get an absolute shebang, so a venv created
-    # under /build and copied to /app leaves `alembic` and `uvicorn` pointing at
+    # under /build and copied to /app leaves `python -m kb_mcp` pointing at
     # /build/.venv/bin/python, which does not exist in the runtime stage — the
     # image imports fine and fails on `docker run` with "missing dynamic
-    # library?". Only the entry points break, so `python -c "import kb_api"`
+    # library?". Only the entry points break, so `python -c "import kb_mcp"`
     # passes and the thing the CMD actually invokes does not.
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
 WORKDIR /build
 
-# Layer one: dependencies only. Every workspace member's pyproject is needed for
-# the lockfile's workspace glob to match the builder, but none of their sources
-# are. Members this image does not run (kb-mcp, kb-client, kb-cli) are listed
-# so `uv sync --frozen` does not see a smaller workspace than the lock.
+# Layer one: dependencies only. Every workspace member's pyproject is needed
+# for the lockfile's workspace glob to match the builder; none of their sources
+# are. Only kb-mcp / kb-client / platform-core are installed in layer two.
 COPY pyproject.toml uv.lock .python-version ./
 COPY apps/kb-api/pyproject.toml apps/kb-api/
 COPY apps/kb-mcp/pyproject.toml apps/kb-mcp/
@@ -58,60 +58,46 @@ COPY libs/platform-fastapi/pyproject.toml libs/platform-fastapi/
 COPY tools/kb-cli/pyproject.toml tools/kb-cli/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace --package kb-api
+    uv sync --frozen --no-dev --no-install-workspace --package kb-mcp
 
 # Layer two: the workspace itself. `--no-editable` so the members are copied into
 # site-packages rather than linked back at /build, which does not exist in the
 # runtime stage.
-COPY apps/kb-api/src apps/kb-api/src
-COPY libs/ai-embeddings/src libs/ai-embeddings/src
+COPY apps/kb-mcp/src apps/kb-mcp/src
+COPY libs/kb-client/src libs/kb-client/src
 COPY libs/platform-core/src libs/platform-core/src
-COPY libs/platform-db/src libs/platform-db/src
-COPY libs/platform-fastapi/src libs/platform-fastapi/src
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --package kb-api
+    uv sync --frozen --no-dev --no-editable --package kb-mcp
 
 # --- runtime ---------------------------------------------------------------
 
 FROM python:3.13-slim-bookworm AS runtime
 
-# A fixed UID, not just a name. The audit spill is a bind-mountable path and the
-# host has to be able to reason about who owns it without inspecting the image.
+# A fixed UID, not just a name. Same uid as kb-api so the two images reason
+# about ownership the same way on the host.
 RUN groupadd --gid 10001 app \
-    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /app app
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /app app \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --from=builder --chown=10001:10001 /app/.venv /app/.venv
 
-# Alembic is invoked from this directory by the migration container. The
-# migration tree is source, not a package, so it is copied rather than installed.
-COPY --chown=10001:10001 apps/kb-api/alembic.ini apps/kb-api/alembic.ini
-COPY --chown=10001:10001 apps/kb-api/migrations apps/kb-api/migrations
-
-# AD-013's spill file. It must be writable by the runtime user, and it must
-# survive a container replacement, so compose mounts a named volume here.
-RUN mkdir -p /app/data && chown 10001:10001 /app/data
-
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    KB_API__AUDIT__SPILL_PATH=/app/data/audit.spill.jsonl
+    PYTHONDONTWRITEBYTECODE=1
 
 USER 10001:10001
 
-EXPOSE 8000
+EXPOSE 9000
 
-# A single worker (Design §6). The query cache, the tier-2 queue, and the
-# rate-limit buckets are each held once in this process; a second worker would
-# fragment all three and multiply AD-014's thresholds by the worker count.
-#
-# `--factory`, because `build_app` reads the environment when it is called
-# rather than at import (Phase 6).
-CMD ["uvicorn", "kb_api.main:build_app", \
-     "--factory", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "1", \
-     "--no-access-log"]
+# `python -m kb_mcp` rather than a uvicorn factory line: `__main__` turns a
+# missing secret into the sentence that names the variable, which is what an
+# operator reading a container's first ten lines should see. One worker is
+# hard-coded there — the session manager holds transport state in process
+# memory, so a second worker would answer requests for sessions it has never
+# heard of.
+CMD ["python", "-m", "kb_mcp"]
