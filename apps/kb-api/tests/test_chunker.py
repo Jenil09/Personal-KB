@@ -27,8 +27,10 @@ from kb_api.chunking import (
 from kb_api.chunking.config import DEFAULT_CONFIG
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# `ai-kb/` is gitignored. Locally these are the Phase 5 exit cases; in CI the
+# glob is empty and collection must not die on `max([])`.
 KB_DOCS = sorted(REPO_ROOT.glob("ai-kb/*.md"))
-LARGEST_KB_DOC = max(KB_DOCS, key=lambda path: path.stat().st_size)
+LARGEST_KB_DOC = max(KB_DOCS, key=lambda path: path.stat().st_size) if KB_DOCS else None
 
 PROSE = normalise(
     "# Guide\n\n"
@@ -45,12 +47,14 @@ def _two_sections(*, deep_words: int) -> str:
 
 
 def _document_ids() -> list[str]:
-    return [path.name for path in KB_DOCS]
+    return [path.name for path in KB_DOCS] or ["missing-ai-kb"]
 
 
-@pytest.fixture(params=KB_DOCS, ids=_document_ids())
-def kb_document(request) -> str:
-    path: Path = request.param
+@pytest.fixture(params=KB_DOCS or [None], ids=_document_ids())
+def kb_document(request: pytest.FixtureRequest) -> str:
+    path: Path | None = request.param
+    if path is None:
+        pytest.skip("ai-kb/*.md is not in this checkout")
     return path.read_text()
 
 
@@ -87,13 +91,17 @@ def test_output_is_identical_across_repeated_runs(kb_document):
     assert chunk_document(kb_document) == chunk_document(kb_document)
 
 
-def test_output_is_identical_across_processes():
+def test_output_is_identical_across_processes(tmp_path: Path):
     """`PYTHONHASHSEED` is what makes this worth a subprocess.
 
     A chunker that iterated a set or a dict keyed by text would be stable
     within a process and unstable across restarts, which AD-008 turns into a
     full re-embed of the corpus on every deploy.
     """
+    source = LARGEST_KB_DOC if LARGEST_KB_DOC is not None else tmp_path / "prose.md"
+    if LARGEST_KB_DOC is None:
+        source.write_text(PROSE)
+
     script = (
         "import hashlib,sys;"
         "from pathlib import Path;"
@@ -103,7 +111,7 @@ def test_output_is_identical_across_processes():
     )
     digests = {
         subprocess.run(
-            [sys.executable, "-c", script, str(LARGEST_KB_DOC)],
+            [sys.executable, "-c", script, str(source)],
             capture_output=True,
             text=True,
             check=True,
@@ -114,7 +122,7 @@ def test_output_is_identical_across_processes():
     assert len(digests) == 1
 
     local = hashlib.sha256(
-        "\x00".join(draft.text for draft in chunk_document(LARGEST_KB_DOC.read_text())).encode()
+        "\x00".join(draft.text for draft in chunk_document(source.read_text())).encode()
     ).hexdigest()
     assert digests == {local}
 
